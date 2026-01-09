@@ -1,0 +1,3516 @@
+-- IMPLEMENTARE CERINTE PROIECT SGBD - DRAGUNOI MIRUNA
+
+-- CERINTA 4 PROIECT
+
+-- CREAREA TABELELOR
+
+-- SECTIE_POLITIE (#id_secție (PK), nume_secție, cod_secție, numar_telefon, email, oras, tara)
+
+CREATE TABLE SECTIE_POLITIE(
+    id_sectie NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    nume_sectie VARCHAR2(100) NOT NULL,
+    cod_sectie VARCHAR2(50) UNIQUE NOT NULL,
+    numar_telefon VARCHAR2(20),
+    email VARCHAR2(50),
+    oras VARCHAR2(100) NOT NULL,
+    tara VARCHAR2(100) DEFAULT 'Romania' NOT NULL,
+
+    -- constrangeri pt numarul de telefon si pt email
+    CONSTRAINT chk_sectie_email CHECK (email LIKE '%@%.%'),
+    CONSTRAINT chk_sectie_telefon CHECK (numar_telefon IS NULL OR REGEXP_LIKE(numar_telefon, '^[0-9+() -]+$'))
+);
+
+-- SPECIALIZARE (#id_specializare (PK), nume_specializare, cod_specializare, nivel_urgenta, risc_ocupational)
+
+CREATE TABLE SPECIALIZARE(
+    id_specializare NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    nume_specializare VARCHAR2(100) NOT NULL,
+    cod_specializare VARCHAR2(50) UNIQUE NOT NULL,
+    nivel_urgenta VARCHAR2(20) DEFAULT 'scazut' NOT NULL,
+    risc_ocupational VARCHAR2(20) DEFAULT 'minim' NOT NULL,
+
+    -- constrangeri pt nivelul de urgenta si riscul ocupational
+    CONSTRAINT chk_nivel_urgenta CHECK (nivel_urgenta in ('scazut', 'mediu', 'ridicat', 'critic')),
+    CONSTRAINT chk_risc_ocupational CHECK (risc_ocupational IN ('minim', 'scazut', 'mediu', 'ridicat'))
+);
+
+-- DEPARTAMENT (#id_departament (PK), #id_sectie (FK), #id_specializare (FK), nume_departament, cod_departament,
+-- locatie_cladire, numar_telefon)
+
+CREATE TABLE DEPARTAMENT(
+    id_departament NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    id_sectie NUMBER NOT NULL,
+    id_specializare NUMBER NOT NULL,
+    nume_departament VARCHAR2(150) NOT NULL,
+    cod_departament VARCHAR2(50) UNIQUE NOT NULL,
+    locatie_cladire VARCHAR2(100),
+    numar_telefon VARCHAR2(20),
+
+    -- cheile externe
+    CONSTRAINT fk_departament_sectie FOREIGN KEY (id_sectie)
+        REFERENCES SECTIE_POLITIE(id_sectie) ON DELETE CASCADE,
+    CONSTRAINT fk_departament_specializare FOREIGN KEY (id_specializare)
+        REFERENCES SPECIALIZARE(id_specializare) ON DELETE CASCADE,
+
+    -- constrangeri numar de telefon
+    CONSTRAINT chk_departament_telefon CHECK (numar_telefon IS NULL OR REGEXP_LIKE(numar_telefon, '^[0-9+() -]+$'))
+);
+
+-- OFITER (#id_ofiter (PK), cod_ofiter, nume, prenume, pozitie, #id_departament (FK), #id_supervizor (FK),
+-- data_angajare, data_nastere)
+
+CREATE TABLE OFITER(
+    id_ofiter NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    id_departament NUMBER NOT NULL,
+    id_supervizor NUMBER,
+    cod_ofiter VARCHAR2(50) UNIQUE NOT NULL,
+    nume VARCHAR2(50) NOT NULL,
+    prenume VARCHAR2(50) NOT NULL,
+    pozitie VARCHAR2(50) NOT NULL,
+    data_angajare DATE DEFAULT SYSDATE NOT NULL,
+    data_nastere DATE NOT NULL,
+
+    -- cheile externe
+    CONSTRAINT fk_ofiter_departament FOREIGN KEY (id_departament)
+        REFERENCES DEPARTAMENT(id_departament) ON DELETE CASCADE,
+    CONSTRAINT fk_ofiter_supervizor FOREIGN KEY (id_supervizor)
+        REFERENCES OFITER(id_ofiter) ON DELETE SET NULL,
+
+    -- constrangerile pt
+    -- 1) pozitia pt ofiter
+    CONSTRAINT chk_ofiter_pozitie CHECK (pozitie IN (
+        'Agent', 'Agent sef', 'Subinspector', 'Inspector',
+        'Inspector sef', 'Comisar', 'Comisar sef'
+    ))
+);
+
+COMMIT;
+
+-- trebuie sa creez un trigger pentru a avea grija ca la insert si update pe tabela OFITER, sa verific ca id_supervizor
+-- sa fie diferit de id_ofiter (un ofiter nu se poate superviza singur) + sa verific ca un ofiter are varsta legala
+
+-- !!! nu pot face constrangere cu check direct din create table deoarece:
+--     - cand folosesc GENERATED ALWAYS AS IDENTITY PRIMARY KEY, id_ofiter este generat dupa ce constrangerile cu
+--     check sunt evaluate
+--     - folosind trigger ul -> acesta se executa dupa ce id_ofiter a fost generat, dar inainte ca inregistrarea sa
+--     fie salvata in baza de date
+--     - nu pot folosi SYSDATE direct in constrangerile cu check
+
+CREATE OR REPLACE TRIGGER trigger_ofiter
+BEFORE INSERT OR UPDATE ON OFITER
+FOR EACH ROW
+DECLARE
+    v_varsta NUMBER;
+BEGIN
+    -- validare varsta
+    v_varsta := MONTHS_BETWEEN(SYSDATE, :NEW.data_nastere) / 12;
+    IF v_varsta < 18 THEN
+        RAISE_APPLICATION_ERROR(-20001, 'Varsta minima trebuie sa fie de 18 ani!');
+    END IF;
+
+    -- validare pentru supervizor
+    IF :NEW.id_supervizor IS NOT NULL AND :NEW.id_ofiter = :NEW.id_supervizor THEN
+        RAISE_APPLICATION_ERROR(-20001, 'Un ofiter nu poate fi propriul sau supervizor');
+    END IF;
+END;
+
+-- CAZ (#id_caz (PK), #id_departament (FK), numar_caz, tip_caz, prioritate_caz, status_caz, data_incidentului,
+-- data_raportare, data_deschidere_caz, data_inchidere_caz, oras, tara)
+
+CREATE TABLE CAZ(
+    id_caz NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    id_departament NUMBER NOT NULL,
+    numar_caz VARCHAR2(50) UNIQUE NOT NULL,
+    tip_caz VARCHAR2(100) NOT NULL,
+    prioritate_caz VARCHAR2(20) DEFAULT 'medie' NOT NULL,
+    status_caz VARCHAR2(30) DEFAULT 'activ' NOT NULL,
+    data_incidentului TIMESTAMP NOT NULL,
+    data_raportare TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+    data_deschidere_caz DATE DEFAULT SYSDATE NOT NULL,
+    data_inchidere_caz DATE,
+    oras VARCHAR2(100) NOT NULL,
+    tara VARCHAR2(100) DEFAULT 'Romania' NOT NULL,
+
+    -- cheie externa
+    CONSTRAINT fk_caz_departament FOREIGN KEY (id_departament)
+        REFERENCES DEPARTAMENT(id_departament) ON DELETE CASCADE,
+
+    -- constrangeri
+    -- prioritatea cazului
+    CONSTRAINT chk_caz_prioritate CHECK (prioritate_caz IN ('scazuta', 'medie', 'ridicata', 'critica', 'urgenta maxima')),
+    -- statusul cazului predefinit
+    CONSTRAINT chk_caz_status CHECK (status_caz IN (
+        'activ', 'suspendat', 'in asteptare', 'rezolvat',
+        'inchis - nesolutionat', 'trimis in judecata'
+    )),
+    -- data raportarii trebuie sa fie dupa data incidentului
+    CONSTRAINT chk_caz_date CHECK (data_incidentului <= data_raportare),
+    -- data inchiderii cazului sa fie dupa deschidere
+    CONSTRAINT chk_caz_inchidere CHECK (data_inchidere_caz IS NULL OR data_inchidere_caz >= data_deschidere_caz)
+);
+
+-- PROBA(#id_proba (PK), #id_caz (FK), numar_evidenta, tip_proba, categorie_proba, data_colectare, conditie_proba,
+-- status_analiza, rezultat_analiza, proba_judecata)
+
+CREATE TABLE PROBA(
+    id_proba NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    id_caz NUMBER NOT NULL,
+    numar_evidenta VARCHAR2(50) UNIQUE NOT NULL,
+    tip_proba VARCHAR2(50) NOT NULL,
+    categorie_proba VARCHAR2(50) NOT NULL,
+    data_colectare TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
+    conditie_proba VARCHAR2(30) DEFAULT 'intacta' NOT NULL,
+    status_analiza VARCHAR2(30) DEFAULT 'nepreluata' NOT NULL,
+    rezultat_analiza VARCHAR2(500),
+    proba_judecata CHAR(1) DEFAULT 'N' NOT NULL,
+
+    -- cheie externa
+    CONSTRAINT fk_proba_caz FOREIGN KEY (id_caz)
+        REFERENCES CAZ(id_caz) ON DELETE CASCADE,
+
+    -- constrangeri
+    CONSTRAINT chk_proba_tip CHECK (tip_proba IN (
+        'biologica', 'balistica', 'digitala', 'documentara', 'fizica', 'testimoniala'
+    )),
+    CONSTRAINT chk_proba_conditie CHECK (conditie_proba IN (
+        'intacta', 'deteriorata partial', 'contaminata', 'descompusa', 'perfect conservata'
+    )),
+    CONSTRAINT chk_proba_status_analiza CHECK (status_analiza IN (
+        'nepreluata', 'in asteptare', 'in analiza', 'analizata',
+        'rezultate disponibile', 'inadecvata pentru analiza'
+    )),
+    CONSTRAINT chk_proba_judecata CHECK (proba_judecata IN ('D', 'N'))
+);
+
+-- SUSPECT(#id_suspect (PK), nume, prenume, data_nasterii, gen, numar_telefon, nivel_pericol, armat, amprenta)
+
+CREATE TABLE SUSPECT (
+    id_suspect NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    nume VARCHAR2(50) NOT NULL,
+    prenume VARCHAR2(50) NOT NULL,
+    data_nasterii DATE NOT NULL,
+    gen VARCHAR2(10) NOT NULL,
+    numar_telefon VARCHAR2(20),
+    nivel_pericol VARCHAR2(20) DEFAULT 'mediu' NOT NULL,
+    armat CHAR(1) DEFAULT 'N' NOT NULL,
+    amprenta VARCHAR2(100),
+
+    -- constrangeri
+    CONSTRAINT chk_suspect_gen CHECK (gen IN ('masculin', 'feminin')),
+    CONSTRAINT chk_suspect_pericol CHECK (nivel_pericol IN (
+        'scazut', 'mediu', 'ridicat', 'extrem'
+    )),
+    CONSTRAINT chk_suspect_armat CHECK (armat IN ('D', 'N')),
+    CONSTRAINT chk_suspect_telefon CHECK (numar_telefon IS NULL OR REGEXP_LIKE(numar_telefon, '^[0-9+() -]+$'))
+);
+
+-- VICTIMA(#id_victima (PK), nume, prenume, genul, data_nastere, inaltime, greutate, culoarea_ochilor,
+-- culoarea_parului, numar_telefon, email, oras, tara)
+
+CREATE TABLE VICTIMA (
+    id_victima NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    nume VARCHAR2(50) NOT NULL,
+    prenume VARCHAR2(50) NOT NULL,
+    genul VARCHAR2(10) NOT NULL,
+    data_nastere DATE NOT NULL,
+    inaltime NUMBER(3),
+    greutate NUMBER(5,2),
+    culoarea_ochilor VARCHAR2(20),
+    culoarea_parului VARCHAR2(20),
+    numar_telefon VARCHAR2(20),
+    email VARCHAR2(100),
+    oras VARCHAR2(100),
+    tara VARCHAR2(100) DEFAULT 'Romania',
+
+    -- constrangeri
+    CONSTRAINT chk_victima_gen CHECK (genul IN ('masculin', 'feminin')),
+    CONSTRAINT chk_victima_inaltime CHECK (inaltime BETWEEN 50 AND 250),
+    CONSTRAINT chk_victima_greutate CHECK (greutate BETWEEN 2 AND 300),
+    CONSTRAINT chk_victima_email CHECK (email LIKE '%@%.%'),
+    CONSTRAINT chk_victima_telefon CHECK (numar_telefon IS NULL OR REGEXP_LIKE(numar_telefon, '^[0-9+() -]+$'))
+);
+
+-- TABELELE ASOCIATIVE
+
+-- CAZ_SUSPECT(#id_caz, #id_suspect, status_suspect, nivel_suspiciune, alibi, motiv_suspiciune, data_interogare,
+-- data_adaugare)
+
+CREATE TABLE CAZ_SUSPECT (
+    id_caz NUMBER NOT NULL,
+    id_suspect NUMBER NOT NULL,
+    status_suspect VARCHAR2(30) DEFAULT 'sub investigatie' NOT NULL,
+    nivel_suspiciune VARCHAR2(20) DEFAULT 'mediu' NOT NULL,
+    alibi VARCHAR2(500),
+    motiv_suspiciune VARCHAR2(500) NOT NULL,
+    data_interogare TIMESTAMP,
+    data_adaugare DATE DEFAULT SYSDATE NOT NULL,
+
+    -- cheia primara
+    CONSTRAINT pk_caz_suspect PRIMARY KEY (id_caz, id_suspect),
+
+    -- cheile straine
+    CONSTRAINT fk_cazsuspect_caz FOREIGN KEY (id_caz)
+        REFERENCES CAZ(id_caz) ON DELETE CASCADE,
+    CONSTRAINT fk_cazsuspect_suspect FOREIGN KEY (id_suspect)
+        REFERENCES SUSPECT(id_suspect) ON DELETE CASCADE,
+
+    -- constrangeri
+    CONSTRAINT chk_cazsuspect_status CHECK (status_suspect IN (
+        'sub investigatie', 'retinut', 'arestat', 'eliberat',
+        'acuzat formal', 'achitat', 'condamnat'
+    )),
+    CONSTRAINT chk_cazsuspect_nivel CHECK (nivel_suspiciune IN (
+        'scazut', 'mediu', 'ridicat', 'foarte ridicat', 'principal suspect'
+    ))
+);
+
+-- CAZ_VICTIMA(#id_caz, #id_victima, rol_victima, status_victima, nivel_ranire)
+
+CREATE TABLE CAZ_VICTIMA (
+    id_caz NUMBER NOT NULL,
+    id_victima NUMBER NOT NULL,
+    rol_victima VARCHAR2(50) DEFAULT 'victima directa' NOT NULL,
+    status_victima VARCHAR2(30) DEFAULT 'in viata' NOT NULL,
+    nivel_ranire VARCHAR2(20) DEFAULT 'medie' NOT NULL,
+
+    -- cheie primara
+    CONSTRAINT pk_caz_victima PRIMARY KEY (id_caz, id_victima),
+
+    -- chei externe
+    CONSTRAINT fk_cazvictima_caz FOREIGN KEY (id_caz)
+        REFERENCES CAZ(id_caz) ON DELETE CASCADE,
+    CONSTRAINT fk_cazvictima_victima FOREIGN KEY (id_victima)
+        REFERENCES VICTIMA(id_victima) ON DELETE CASCADE,
+
+    -- constrangeri
+    CONSTRAINT chk_cazvictima_rol CHECK (rol_victima IN (
+        'victima directa', 'victima secundara', 'martor victimizat',
+        'ruda victima indirecta', 'supravietuitor'
+    )),
+    CONSTRAINT chk_cazvictima_status CHECK (status_victima IN (
+        'in viata - recuperare', 'in viata - traumatizata', 'decedata',
+        'disparuta', 'spitalizata', 'in protectie', 'relocata'
+    )),
+    CONSTRAINT chk_cazvictima_ranire CHECK (nivel_ranire IN (
+        'niciuna', 'usoara', 'medie', 'grava', 'critica/fatala', 'deces'
+    ))
+);
+
+COMMIT;
+
+
+-- CERINTA 5 PROIECT
+
+-- INSERT PENTRU FIECARE TABEL
+
+-- INSERT PENTRU TABELA SECTIE_POLITIE
+
+INSERT INTO SECTIE_POLITIE (nume_sectie, cod_sectie, numar_telefon, email, oras, tara)
+VALUES ('Sectia 1 Bucuresti', 'SEC-01-B', '021-313-2001', 'sectia1buc@politia.ro', 'Bucuresti', 'Romania');
+
+INSERT INTO SECTIE_POLITIE (nume_sectie, cod_sectie, numar_telefon, email, oras, tara)
+VALUES ('Sectia 2 Bucuresti', 'SEC-02-B', '021-313-2002', 'sectia2buc@politia.ro', 'Bucuresti', 'Romania');
+
+INSERT INTO SECTIE_POLITIE (nume_sectie, cod_sectie, numar_telefon, email, oras, tara)
+VALUES ('Sectia 3 Cluj-Napoca', 'SEC-03-CJ', '0264-595-001', 'sectia3cluj@politia.ro', 'Cluj-Napoca', 'Romania');
+
+INSERT INTO SECTIE_POLITIE (nume_sectie, cod_sectie, numar_telefon, email, oras, tara)
+VALUES ('Sectia 4 Timisoara', 'SEC-04-TM', '0256-220-001', 'sectia4tim@politia.ro', 'Timisoara', 'Romania');
+
+INSERT INTO SECTIE_POLITIE (nume_sectie, cod_sectie, numar_telefon, email, oras, tara)
+VALUES ('Sectia 5 Iasi', 'SEC-05-IS', '0232-213-001', 'sectia5iasi@politia.ro', 'Iasi', 'Romania');
+
+INSERT INTO SECTIE_POLITIE (nume_sectie, cod_sectie, numar_telefon, email, oras, tara)
+VALUES ('Sectia 6 Constanta', 'SEC-06-CT', '0241-664-001', 'sectia6ct@politia.ro', 'Constanta', 'Romania');
+
+INSERT INTO SECTIE_POLITIE (nume_sectie, cod_sectie, numar_telefon, email, oras, tara)
+VALUES ('Sectia 7 Brasov', 'SEC-07-BV', '0268-407-001', 'sectia7brasov@politia.ro', 'Brasov', 'Romania');
+
+INSERT INTO SECTIE_POLITIE (nume_sectie, cod_sectie, numar_telefon, email, oras, tara)
+VALUES ('Sectia 8 Craiova', 'SEC-08-CRV', '0251-408-001', 'sectia8craiova@politia.ro', 'Craiova', 'Romania');
+
+COMMIT;
+
+-- INSERT PENTRU TABELA SPECIALIZARE
+
+INSERT INTO SPECIALIZARE (nume_specializare, cod_specializare, nivel_urgenta, risc_ocupational)
+VALUES ('Investigare Omoruri', 'OMO', 'critic', 'ridicat');
+
+INSERT INTO SPECIALIZARE (nume_specializare, cod_specializare, nivel_urgenta, risc_ocupational)
+VALUES ('Antidrog', 'ANTI', 'ridicat', 'ridicat');
+
+INSERT INTO SPECIALIZARE (nume_specializare, cod_specializare, nivel_urgenta, risc_ocupational)
+VALUES ('Persoane Disparute', 'PERS', 'ridicat', 'mediu');
+
+INSERT INTO SPECIALIZARE (nume_specializare, cod_specializare, nivel_urgenta, risc_ocupational)
+VALUES ('Crima Organizata', 'CRIM', 'critic', 'ridicat');
+
+INSERT INTO SPECIALIZARE (nume_specializare, cod_specializare, nivel_urgenta, risc_ocupational)
+VALUES ('Furt si Talharie', 'FURT', 'mediu', 'mediu');
+
+INSERT INTO SPECIALIZARE (nume_specializare, cod_specializare, nivel_urgenta, risc_ocupational)
+VALUES ('Crime Cibernetice', 'CYBER', 'ridicat', 'scazut');
+
+INSERT INTO SPECIALIZARE (nume_specializare, cod_specializare, nivel_urgenta, risc_ocupational)
+VALUES ('Violenta Domestica', 'VIOL', 'ridicat', 'ridicat');
+
+INSERT INTO SPECIALIZARE (nume_specializare, cod_specializare, nivel_urgenta, risc_ocupational)
+VALUES ('Frauda Financiara', 'FRAUD', 'mediu', 'scazut');
+
+COMMIT;
+
+-- INSERT PENTRU TABELA DEPARTAMENT
+
+INSERT INTO DEPARTAMENT (id_sectie, id_specializare, nume_departament, cod_departament, locatie_cladire, numar_telefon)
+VALUES (1, 1, 'Departament Omoruri - Sectia 1 Bucuresti', 'SEC-01-B-OMO', 'Etaj 3', '021-313-2101');
+
+INSERT INTO DEPARTAMENT (id_sectie, id_specializare, nume_departament, cod_departament, locatie_cladire, numar_telefon)
+VALUES (1, 2, 'Departament Antidrog - Sectia 1 Bucuresti', 'SEC-01-B-ANTI', 'Etaj 2', '021-313-2102');
+
+INSERT INTO DEPARTAMENT (id_sectie, id_specializare, nume_departament, cod_departament, locatie_cladire, numar_telefon)
+VALUES (2, 1, 'Departament Omoruri - Sectia 2 Bucuresti', 'SEC-02-B-OMO', 'Etaj 4', '021-313-2201');
+
+INSERT INTO DEPARTAMENT (id_sectie, id_specializare, nume_departament, cod_departament, locatie_cladire, numar_telefon)
+VALUES (3, 3, 'Departament Persoane Disparute - Sectia 3 Cluj', 'SEC-03-CJ-PERS', 'Parter', '0264-595-301');
+
+INSERT INTO DEPARTAMENT (id_sectie, id_specializare, nume_departament, cod_departament, locatie_cladire, numar_telefon)
+VALUES (4, 4, 'Departament Crima Organizata - Sectia 4 Timisoara', 'SEC-04-TM-CRIM', 'Etaj 5', '0256-220-401');
+
+INSERT INTO DEPARTAMENT (id_sectie, id_specializare, nume_departament, cod_departament, locatie_cladire, numar_telefon)
+VALUES (5, 5, 'Departament Furt - Sectia 5 Iasi', 'SEC-05-IS-FURT', 'Etaj 1', '0232-213-501');
+
+INSERT INTO DEPARTAMENT (id_sectie, id_specializare, nume_departament, cod_departament, locatie_cladire, numar_telefon)
+VALUES (6, 6, 'Departament Crime Cibernetice - Sectia 6 Constanta', 'SEC-06-CT-CYBER', 'Etaj 2', '0241-664-601');
+
+INSERT INTO DEPARTAMENT (id_sectie, id_specializare, nume_departament, cod_departament, locatie_cladire, numar_telefon)
+VALUES (7, 7, 'Departament Violenta Domestica - Sectia 7 Brasov', 'SEC-07-BV-VIOL', 'Parter', '0268-407-701');
+
+COMMIT;
+
+-- INSERT PENTRU TABELA OFITER
+
+-- sefi de departament (fara supervizor)
+INSERT INTO OFITER (id_departament, id_supervizor, cod_ofiter, nume, prenume, pozitie, data_angajare, data_nastere)
+VALUES (1, NULL, 'OF-2020-001', 'Popescu', 'Ion', 'Comisar sef', TO_DATE('2015-03-15', 'YYYY-MM-DD'), TO_DATE('1975-06-20', 'YYYY-MM-DD'));
+
+INSERT INTO OFITER (id_departament, id_supervizor, cod_ofiter, nume, prenume, pozitie, data_angajare, data_nastere)
+VALUES (2, NULL, 'OF-2020-002', 'Ionescu', 'Maria', 'Comisar', TO_DATE('2016-07-01', 'YYYY-MM-DD'), TO_DATE('1980-03-12', 'YYYY-MM-DD'));
+
+INSERT INTO OFITER (id_departament, id_supervizor, cod_ofiter, nume, prenume, pozitie, data_angajare, data_nastere)
+VALUES (3, NULL, 'OF-2020-003', 'Georgescu', 'Andrei', 'Comisar sef', TO_DATE('2014-01-10', 'YYYY-MM-DD'), TO_DATE('1978-11-05', 'YYYY-MM-DD'));
+
+-- ofiteri subordonati
+INSERT INTO OFITER (id_departament, id_supervizor, cod_ofiter, nume, prenume, pozitie, data_angajare, data_nastere)
+VALUES (1, 1, 'OF-2021-004', 'Vasilescu', 'Elena', 'Inspector sef', TO_DATE('2018-05-20', 'YYYY-MM-DD'), TO_DATE('1985-09-18', 'YYYY-MM-DD'));
+
+INSERT INTO OFITER (id_departament, id_supervizor, cod_ofiter, nume, prenume, pozitie, data_angajare, data_nastere)
+VALUES (1, 1, 'OF-2022-005', 'Dumitrescu', 'Mihai', 'Inspector', TO_DATE('2020-02-14', 'YYYY-MM-DD'), TO_DATE('1990-04-25', 'YYYY-MM-DD'));
+
+INSERT INTO OFITER (id_departament, id_supervizor, cod_ofiter, nume, prenume, pozitie, data_angajare, data_nastere)
+VALUES (2, 2, 'OF-2022-006', 'Stan', 'Alexandra', 'Subinspector', TO_DATE('2021-08-01', 'YYYY-MM-DD'), TO_DATE('1992-07-30', 'YYYY-MM-DD'));
+
+INSERT INTO OFITER (id_departament, id_supervizor, cod_ofiter, nume, prenume, pozitie, data_angajare, data_nastere)
+VALUES (3, 3, 'OF-2023-007', 'Popa', 'Cristian', 'Inspector', TO_DATE('2022-11-15', 'YYYY-MM-DD'), TO_DATE('1988-12-10', 'YYYY-MM-DD'));
+
+INSERT INTO OFITER (id_departament, id_supervizor, cod_ofiter, nume, prenume, pozitie, data_angajare, data_nastere)
+VALUES (2, 2, 'OF-2019-008', 'Munteanu', 'Daniel', 'Comisar', TO_DATE('2013-06-01', 'YYYY-MM-DD'), TO_DATE('1977-02-28', 'YYYY-MM-DD'));
+
+COMMIT;
+
+-- INSERT PENTRU TABELA CAZ
+INSERT INTO CAZ (id_departament, numar_caz, tip_caz, prioritate_caz, status_caz, data_incidentului, data_raportare, data_deschidere_caz, data_inchidere_caz, oras, tara)
+VALUES (1, '2024/OMO/001', 'Omor', 'critica', 'activ',
+        TO_TIMESTAMP('2024-11-15 22:30:00', 'YYYY-MM-DD HH24:MI:SS'),
+        TO_TIMESTAMP('2024-11-15 23:15:00', 'YYYY-MM-DD HH24:MI:SS'),
+        TO_DATE('2024-11-16', 'YYYY-MM-DD'), NULL, 'Bucuresti', 'Romania');
+
+INSERT INTO CAZ (id_departament, numar_caz, tip_caz, prioritate_caz, status_caz, data_incidentului, data_raportare, data_deschidere_caz, data_inchidere_caz, oras, tara)
+VALUES (2, '2024/ANTI/045', 'Trafic de droguri', 'ridicata', 'activ',
+        TO_TIMESTAMP('2024-12-01 14:00:00', 'YYYY-MM-DD HH24:MI:SS'),
+        TO_TIMESTAMP('2024-12-01 18:30:00', 'YYYY-MM-DD HH24:MI:SS'),
+        TO_DATE('2024-12-02', 'YYYY-MM-DD'), NULL, 'Bucuresti', 'Romania');
+
+INSERT INTO CAZ (id_departament, numar_caz, tip_caz, prioritate_caz, status_caz, data_incidentului, data_raportare, data_deschidere_caz, data_inchidere_caz, oras, tara)
+VALUES (3, '2024/OMO/012', 'Tentativa de omor', 'critica', 'rezolvat',
+        TO_TIMESTAMP('2024-10-20 19:45:00', 'YYYY-MM-DD HH24:MI:SS'),
+        TO_TIMESTAMP('2024-10-20 20:00:00', 'YYYY-MM-DD HH24:MI:SS'),
+        TO_DATE('2024-10-21', 'YYYY-MM-DD'), TO_DATE('2024-12-10', 'YYYY-MM-DD'), 'Bucuresti', 'Romania');
+
+INSERT INTO CAZ (id_departament, numar_caz, tip_caz, prioritate_caz, status_caz, data_incidentului, data_raportare, data_deschidere_caz, data_inchidere_caz, oras, tara)
+VALUES (4, '2024/PERS/078', 'Persoana disparuta', 'ridicata', 'activ',
+        TO_TIMESTAMP('2024-12-20 10:00:00', 'YYYY-MM-DD HH24:MI:SS'),
+        TO_TIMESTAMP('2024-12-20 16:30:00', 'YYYY-MM-DD HH24:MI:SS'),
+        TO_DATE('2024-12-20', 'YYYY-MM-DD'), NULL, 'Cluj-Napoca', 'Romania');
+
+INSERT INTO CAZ (id_departament, numar_caz, tip_caz, prioritate_caz, status_caz, data_incidentului, data_raportare, data_deschidere_caz, data_inchidere_caz, oras, tara)
+VALUES (5, '2024/CRIM/023', 'Crima organizata - extorcare', 'critica', 'activ',
+        TO_TIMESTAMP('2024-11-05 08:00:00', 'YYYY-MM-DD HH24:MI:SS'),
+        TO_TIMESTAMP('2024-11-05 12:00:00', 'YYYY-MM-DD HH24:MI:SS'),
+        TO_DATE('2024-11-06', 'YYYY-MM-DD'), NULL, 'Timisoara', 'Romania');
+
+INSERT INTO CAZ (id_departament, numar_caz, tip_caz, prioritate_caz, status_caz, data_incidentului, data_raportare, data_deschidere_caz, data_inchidere_caz, oras, tara)
+VALUES (6, '2024/FURT/156', 'Furt cu efractie', 'medie', 'suspendat',
+        TO_TIMESTAMP('2024-09-15 03:00:00', 'YYYY-MM-DD HH24:MI:SS'),
+        TO_TIMESTAMP('2024-09-15 08:30:00', 'YYYY-MM-DD HH24:MI:SS'),
+        TO_DATE('2024-09-15', 'YYYY-MM-DD'), NULL, 'Iasi', 'Romania');
+
+INSERT INTO CAZ (id_departament, numar_caz, tip_caz, prioritate_caz, status_caz, data_incidentului, data_raportare, data_deschidere_caz, data_inchidere_caz, oras, tara)
+VALUES (7, '2024/CYBER/089', 'Frauda online', 'ridicata', 'activ',
+        TO_TIMESTAMP('2024-12-10 12:00:00', 'YYYY-MM-DD HH24:MI:SS'),
+        TO_TIMESTAMP('2024-12-11 09:00:00', 'YYYY-MM-DD HH24:MI:SS'),
+        TO_DATE('2024-12-11', 'YYYY-MM-DD'), NULL, 'Constanta', 'Romania');
+
+INSERT INTO CAZ (id_departament, numar_caz, tip_caz, prioritate_caz, status_caz, data_incidentului, data_raportare, data_deschidere_caz, data_inchidere_caz, oras, tara)
+VALUES (8, '2024/VIOL/034', 'Violenta domestica', 'ridicata', 'trimis in judecata',
+        TO_TIMESTAMP('2024-11-28 20:00:00', 'YYYY-MM-DD HH24:MI:SS'),
+        TO_TIMESTAMP('2024-11-28 21:00:00', 'YYYY-MM-DD HH24:MI:SS'),
+        TO_DATE('2024-11-29', 'YYYY-MM-DD'), TO_DATE('2024-12-20', 'YYYY-MM-DD'), 'Brasov', 'Romania');
+
+COMMIT;
+
+-- INSERT PENTRU TABELA SUSPECT
+
+INSERT INTO SUSPECT (nume, prenume, data_nasterii, gen, numar_telefon, nivel_pericol, armat, amprenta)
+VALUES ('Radu', 'Bogdan', TO_DATE('1985-05-10', 'YYYY-MM-DD'), 'masculin', '0721123456', 'extrem', 'D', 'AMP-2024-001');
+
+INSERT INTO SUSPECT (nume, prenume, data_nasterii, gen, numar_telefon, nivel_pericol, armat, amprenta)
+VALUES ('Marinescu', 'Victor', TO_DATE('1990-08-22', 'YYYY-MM-DD'), 'masculin', '0732234567', 'ridicat', 'N', 'AMP-2024-002');
+
+INSERT INTO SUSPECT (nume, prenume, data_nasterii, gen, numar_telefon, nivel_pericol, armat, amprenta)
+VALUES ('Constantinescu', 'Adrian', TO_DATE('1982-12-05', 'YYYY-MM-DD'), 'masculin', NULL, 'ridicat', 'D', 'AMP-2024-003');
+
+INSERT INTO SUSPECT (nume, prenume, data_nasterii, gen, numar_telefon, nivel_pericol, armat, amprenta)
+VALUES ('Ion', 'Gabriel', TO_DATE('1995-03-18', 'YYYY-MM-DD'), 'masculin', '0745345678', 'mediu', 'N', 'AMP-2024-004');
+
+INSERT INTO SUSPECT (nume, prenume, data_nasterii, gen, numar_telefon, nivel_pericol, armat, amprenta)
+VALUES ('Stoica', 'Florin', TO_DATE('1988-07-14', 'YYYY-MM-DD'), 'masculin', '0756456789', 'scazut', 'N', NULL);
+
+INSERT INTO SUSPECT (nume, prenume, data_nasterii, gen, numar_telefon, nivel_pericol, armat, amprenta)
+VALUES ('Nicolae', 'Marian', TO_DATE('1992-11-30', 'YYYY-MM-DD'), 'masculin', '0767567890', 'ridicat', 'N', 'AMP-2024-006');
+
+INSERT INTO SUSPECT (nume, prenume, data_nasterii, gen, numar_telefon, nivel_pericol, armat, amprenta)
+VALUES ('Andreescu', 'Viorel', TO_DATE('1980-01-25', 'YYYY-MM-DD'), 'masculin', NULL, 'extrem', 'D', 'AMP-2024-007');
+
+INSERT INTO SUSPECT (nume, prenume, data_nasterii, gen, numar_telefon, nivel_pericol, armat, amprenta)
+VALUES ('Tudor', 'Gheorghe', TO_DATE('1998-09-08', 'YYYY-MM-DD'), 'masculin', '0778678901', 'mediu', 'N', 'AMP-2024-008');
+
+COMMIT;
+
+-- INSERT PENTRU TABELA VICTIMA
+INSERT INTO VICTIMA (nume, prenume, genul, data_nastere, inaltime, greutate, culoarea_ochilor, culoarea_parului, numar_telefon, email, oras, tara)
+VALUES ('Matei', 'Ana', 'feminin', TO_DATE('1990-04-12', 'YYYY-MM-DD'), 165, 55.5, 'caprui', 'saten', '0721111222', 'ana.matei@email.com', 'Bucuresti', 'Romania');
+
+INSERT INTO VICTIMA (nume, prenume, genul, data_nastere, inaltime, greutate, culoarea_ochilor, culoarea_parului, numar_telefon, email, oras, tara)
+VALUES ('Popescu', 'Elena', 'feminin', TO_DATE('1985-08-20', 'YYYY-MM-DD'), 170, 62.0, 'albastri', 'blond', '0732222333', 'elena.popescu@email.com', 'Cluj-Napoca', 'Romania');
+
+INSERT INTO VICTIMA (nume, prenume, genul, data_nastere, inaltime, greutate, culoarea_ochilor, culoarea_parului, numar_telefon, email, oras, tara)
+VALUES ('Ionescu', 'Mihaela', 'feminin', TO_DATE('1992-06-15', 'YYYY-MM-DD'), 168, 58.0, 'verzi', 'negru', '0743333444', 'mihaela.ion@email.com', 'Timisoara', 'Romania');
+
+INSERT INTO VICTIMA (nume, prenume, genul, data_nastere, inaltime, greutate, culoarea_ochilor, culoarea_parului, numar_telefon, email, oras, tara)
+VALUES ('Georgescu', 'Maria', 'feminin', TO_DATE('1988-12-03', 'YYYY-MM-DD'), 160, 52.0, 'caprui', 'roscat', '0754444555', NULL, 'Iasi', 'Romania');
+
+INSERT INTO VICTIMA (nume, prenume, genul, data_nastere, inaltime, greutate, culoarea_ochilor, culoarea_parului, numar_telefon, email, oras, tara)
+VALUES ('Stan', 'Ioana', 'feminin', TO_DATE('1995-02-28', 'YYYY-MM-DD'), 172, 65.0, 'albastri', 'saten', '0765555666', 'ioana.stan@email.com', 'Constanta', 'Romania');
+
+INSERT INTO VICTIMA (nume, prenume, genul, data_nastere, inaltime, greutate, culoarea_ochilor, culoarea_parului, numar_telefon, email, oras, tara)
+VALUES ('Popa', 'Andreea', 'feminin', TO_DATE('1993-10-10', 'YYYY-MM-DD'), 166, 60.0, 'verzi', 'blond', NULL, 'andreea.popa@email.com', 'Brasov', 'Romania');
+
+INSERT INTO VICTIMA (nume, prenume, genul, data_nastere, inaltime, greutate, culoarea_ochilor, culoarea_parului, numar_telefon, email, oras, tara)
+VALUES ('Dumitru', 'Cristina', 'feminin', TO_DATE('1987-07-22', 'YYYY-MM-DD'), 163, 56.0, 'caprui', 'negru', '0776666777', NULL, 'Craiova', 'Romania');
+
+INSERT INTO VICTIMA (nume, prenume, genul, data_nastere, inaltime, greutate, culoarea_ochilor, culoarea_parului, numar_telefon, email, oras, tara)
+VALUES ('Vasilescu', 'Diana', 'feminin', TO_DATE('1991-05-18', 'YYYY-MM-DD'), 169, 61.5, 'albastri', 'saten', '0787777888', 'diana.v@email.com', 'Bucuresti', 'Romania');
+
+COMMIT;
+
+
+-- INSERT PENTRU TABELA PROBA
+INSERT INTO PROBA (id_caz, numar_evidenta, tip_proba, categorie_proba, data_colectare, conditie_proba, status_analiza, rezultat_analiza, proba_judecata)
+VALUES (1, 'PROB-2024-OMO-001-A', 'biologica', 'ADN',
+        TO_TIMESTAMP('2024-11-16 01:30:00', 'YYYY-MM-DD HH24:MI:SS'),
+        'intacta', 'analizata', 'ADN corespunde suspectului ID 1', 'D');
+
+INSERT INTO PROBA (id_caz, numar_evidenta, tip_proba, categorie_proba, data_colectare, conditie_proba, status_analiza, rezultat_analiza, proba_judecata)
+VALUES (1, 'PROB-2024-OMO-001-B', 'balistica', 'Glont',
+        TO_TIMESTAMP('2024-11-16 02:00:00', 'YYYY-MM-DD HH24:MI:SS'),
+        'intacta', 'analizata', 'Calibru 9mm, compatibil cu arma gasita', 'D');
+
+INSERT INTO PROBA (id_caz, numar_evidenta, tip_proba, categorie_proba, data_colectare, conditie_proba, status_analiza, rezultat_analiza, proba_judecata)
+VALUES (1, 'PROB-2024-OMO-001-C', 'fizica', 'Amprenta digitala',
+        TO_TIMESTAMP('2024-11-16 00:45:00', 'YYYY-MM-DD HH24:MI:SS'),
+        'perfect conservata', 'rezultate disponibile', '12 puncte de corespondenta cu suspectul', 'D');
+
+INSERT INTO PROBA (id_caz, numar_evidenta, tip_proba, categorie_proba, data_colectare, conditie_proba, status_analiza, rezultat_analiza, proba_judecata)
+VALUES (2, 'PROB-2024-ANTI-045-A', 'fizica', 'Substanta narcotica',
+        TO_TIMESTAMP('2024-12-02 09:00:00', 'YYYY-MM-DD HH24:MI:SS'),
+        'intacta', 'analizata', 'Cocaina puritate 85%, greutate 2.5kg', 'D');
+
+INSERT INTO PROBA (id_caz, numar_evidenta, tip_proba, categorie_proba, data_colectare, conditie_proba, status_analiza, rezultat_analiza, proba_judecata)
+VALUES (3, 'PROB-2024-OMO-012-A', 'biologica', 'Sange',
+        TO_TIMESTAMP('2024-10-21 08:30:00', 'YYYY-MM-DD HH24:MI:SS'),
+        'intacta', 'analizata', 'Grup sangvin A+, ADN victima confirmat', 'D');
+
+INSERT INTO PROBA (id_caz, numar_evidenta, tip_proba, categorie_proba, data_colectare, conditie_proba, status_analiza, rezultat_analiza, proba_judecata)
+VALUES (5, 'PROB-2024-CRIM-023-A', 'documentara', 'Inregistrare audio',
+        TO_TIMESTAMP('2024-11-06 14:00:00', 'YYYY-MM-DD HH24:MI:SS'),
+        'intacta', 'analizata', 'Voce identificata - suspect principal', 'D');
+
+INSERT INTO PROBA (id_caz, numar_evidenta, tip_proba, categorie_proba, data_colectare, conditie_proba, status_analiza, rezultat_analiza, proba_judecata)
+VALUES (7, 'PROB-2024-CYBER-089-A', 'digitala', 'Hard disk',
+        TO_TIMESTAMP('2024-12-11 15:00:00', 'YYYY-MM-DD HH24:MI:SS'),
+        'intacta', 'in analiza', NULL, 'N');
+
+INSERT INTO PROBA (id_caz, numar_evidenta, tip_proba, categorie_proba, data_colectare, conditie_proba, status_analiza, rezultat_analiza, proba_judecata)
+VALUES (8, 'PROB-2024-VIOL-034-A', 'fizica', 'Fotografie leziuni',
+        TO_TIMESTAMP('2024-11-28 22:00:00', 'YYYY-MM-DD HH24:MI:SS'),
+        'perfect conservata', 'analizata', 'Vanataipe consistente cu declaratiile victimei', 'D');
+
+COMMIT;
+
+-- INSERT PENTRU TABELA CAZ_SUSPECT
+INSERT INTO CAZ_SUSPECT (id_caz, id_suspect, status_suspect, nivel_suspiciune, alibi, motiv_suspiciune, data_interogare, data_adaugare)
+VALUES (1, 1, 'arestat', 'principal suspect', 'Fara alibi credibil', 'ADN gasit la fata locului, amprente pe arma',
+        TO_TIMESTAMP('2024-11-17 10:00:00', 'YYYY-MM-DD HH24:MI:SS'), TO_DATE('2024-11-16', 'YYYY-MM-DD'));
+
+INSERT INTO CAZ_SUSPECT (id_caz, id_suspect, status_suspect, nivel_suspiciune, alibi, motiv_suspiciune, data_interogare, data_adaugare)
+VALUES (1, 2, 'sub investigatie', 'mediu', 'Pretinde ca era acasa, neverificat', 'Martor ocular raporteaza asemanare fizica',
+        TO_TIMESTAMP('2024-11-18 14:00:00', 'YYYY-MM-DD HH24:MI:SS'), TO_DATE('2024-11-17', 'YYYY-MM-DD'));
+
+INSERT INTO CAZ_SUSPECT (id_caz, id_suspect, status_suspect, nivel_suspiciune, alibi, motiv_suspiciune, data_interogare, data_adaugare)
+VALUES (2, 3, 'retinut', 'foarte ridicat', 'Fara alibi', 'Prins in flagrant cu substante narcotice',
+        TO_TIMESTAMP('2024-12-02 16:00:00', 'YYYY-MM-DD HH24:MI:SS'), TO_DATE('2024-12-02', 'YYYY-MM-DD'));
+
+INSERT INTO CAZ_SUSPECT (id_caz, id_suspect, status_suspect, nivel_suspiciune, alibi, motiv_suspiciune, data_interogare, data_adaugare)
+VALUES (2, 4, 'sub investigatie', 'ridicat', 'La serviciu, verificat partial', 'Conexiuni cu suspectul principal, transferuri bancare suspecte',
+        NULL, TO_DATE('2024-12-03', 'YYYY-MM-DD'));
+
+INSERT INTO CAZ_SUSPECT (id_caz, id_suspect, status_suspect, nivel_suspiciune, alibi, motiv_suspiciune, data_interogare, data_adaugare)
+VALUES (3, 2, 'condamnat', 'principal suspect', 'Contrazis de probe video', 'Amprenta pe arma crimei, marturie victima',
+        TO_TIMESTAMP('2024-10-22 09:00:00', 'YYYY-MM-DD HH24:MI:SS'), TO_DATE('2024-10-21', 'YYYY-MM-DD'));
+
+INSERT INTO CAZ_SUSPECT (id_caz, id_suspect, status_suspect, nivel_suspiciune, alibi, motiv_suspiciune, data_interogare, data_adaugare)
+VALUES (5, 1, 'sub investigatie', 'foarte ridicat', NULL, 'Legaturi cu retea de crima organizata, interceptari telefonice',
+        NULL, TO_DATE('2024-11-08', 'YYYY-MM-DD'));
+
+INSERT INTO CAZ_SUSPECT (id_caz, id_suspect, status_suspect, nivel_suspiciune, alibi, motiv_suspiciune, data_interogare, data_adaugare)
+VALUES (5, 6, 'retinut', 'ridicat', 'Pretinde ca era in alt oras, neverificat', 'Recunoscut de victima, interceptari',
+        TO_TIMESTAMP('2024-11-10 11:00:00', 'YYYY-MM-DD HH24:MI:SS'), TO_DATE('2024-11-09', 'YYYY-MM-DD'));
+
+INSERT INTO CAZ_SUSPECT (id_caz, id_suspect, status_suspect, nivel_suspiciune, alibi, motiv_suspiciune, data_interogare, data_adaugare)
+VALUES (5, 7, 'arestat', 'principal suspect', 'Fara alibi', 'Lider de grup, identificat in inregistrari audio',
+        TO_TIMESTAMP('2024-11-11 15:00:00', 'YYYY-MM-DD HH24:MI:SS'), TO_DATE('2024-11-10', 'YYYY-MM-DD'));
+
+INSERT INTO CAZ_SUSPECT (id_caz, id_suspect, status_suspect, nivel_suspiciune, alibi, motiv_suspiciune, data_interogare, data_adaugare)
+VALUES (6, 5, 'eliberat', 'scazut', 'Alibi verificat si confirmat de 3 martori', 'Asemanare fizica cu descrierea initiala',
+        TO_TIMESTAMP('2024-09-16 10:00:00', 'YYYY-MM-DD HH24:MI:SS'), TO_DATE('2024-09-15', 'YYYY-MM-DD'));
+
+INSERT INTO CAZ_SUSPECT (id_caz, id_suspect, status_suspect, nivel_suspiciune, alibi, motiv_suspiciune, data_interogare, data_adaugare)
+VALUES (7, 4, 'sub investigatie', 'ridicat', NULL, 'Adresa IP trasata, activitate suspicioasa online',
+        NULL, TO_DATE('2024-12-12', 'YYYY-MM-DD'));
+
+INSERT INTO CAZ_SUSPECT (id_caz, id_suspect, status_suspect, nivel_suspiciune, alibi, motiv_suspiciune, data_interogare, data_adaugare)
+VALUES (7, 8, 'sub investigatie', 'mediu', 'Verificare in curs', 'Cont bancar conectat la tranzactii frauduloase',
+        NULL, TO_DATE('2024-12-13', 'YYYY-MM-DD'));
+
+INSERT INTO CAZ_SUSPECT (id_caz, id_suspect, status_suspect, nivel_suspiciune, alibi, motiv_suspiciune, data_interogare, data_adaugare)
+VALUES (8, 6, 'acuzat formal', 'principal suspect', 'Fara alibi credibil', 'Marturii multiple victime, istoric violenta',
+        TO_TIMESTAMP('2024-11-29 09:00:00', 'YYYY-MM-DD HH24:MI:SS'), TO_DATE('2024-11-29', 'YYYY-MM-DD'));
+
+INSERT INTO CAZ_SUSPECT (id_caz, id_suspect, status_suspect, nivel_suspiciune, alibi, motiv_suspiciune, data_interogare, data_adaugare)
+VALUES (3, 7, 'sub investigatie', 'mediu', 'Alibi partial verificat', 'Prezent in zona la ora incidentului, relatie anterioara cu victima',
+        TO_TIMESTAMP('2024-10-23 13:00:00', 'YYYY-MM-DD HH24:MI:SS'), TO_DATE('2024-10-22', 'YYYY-MM-DD'));
+
+COMMIT;
+
+-- INSERT PENTRU TABELA CAZ_VICTIMA
+INSERT INTO CAZ_VICTIMA (id_caz, id_victima, rol_victima, status_victima, nivel_ranire)
+VALUES (1, 1, 'victima directa', 'decedata', 'deces');
+
+INSERT INTO CAZ_VICTIMA (id_caz, id_victima, rol_victima, status_victima, nivel_ranire)
+VALUES (1, 2, 'martor victimizat', 'in viata - traumatizata', 'usoara');
+
+INSERT INTO CAZ_VICTIMA (id_caz, id_victima, rol_victima, status_victima, nivel_ranire)
+VALUES (2, 3, 'victima secundara', 'in viata - recuperare', 'niciuna');
+
+INSERT INTO CAZ_VICTIMA (id_caz, id_victima, rol_victima, status_victima, nivel_ranire)
+VALUES (3, 4, 'victima directa', 'in viata - recuperare', 'grava');
+
+INSERT INTO CAZ_VICTIMA (id_caz, id_victima, rol_victima, status_victima, nivel_ranire)
+VALUES (3, 8, 'martor victimizat', 'in viata - traumatizata', 'usoara');
+
+INSERT INTO CAZ_VICTIMA (id_caz, id_victima, rol_victima, status_victima, nivel_ranire)
+VALUES (4, 5, 'victima directa', 'disparuta', 'niciuna');
+
+INSERT INTO CAZ_VICTIMA (id_caz, id_victima, rol_victima, status_victima, nivel_ranire)
+VALUES (5, 6, 'victima directa', 'in protectie', 'medie');
+
+INSERT INTO CAZ_VICTIMA (id_caz, id_victima, rol_victima, status_victima, nivel_ranire)
+VALUES (5, 7, 'victima secundara', 'in protectie', 'usoara');
+
+INSERT INTO CAZ_VICTIMA (id_caz, id_victima, rol_victima, status_victima, nivel_ranire)
+VALUES (5, 3, 'victima secundara', 'relocata', 'niciuna');
+
+INSERT INTO CAZ_VICTIMA (id_caz, id_victima, rol_victima, status_victima, nivel_ranire)
+VALUES (6, 2, 'victima directa', 'in viata - recuperare', 'niciuna');
+
+INSERT INTO CAZ_VICTIMA (id_caz, id_victima, rol_victima, status_victima, nivel_ranire)
+VALUES (7, 4, 'victima directa', 'in viata - traumatizata', 'niciuna');
+
+INSERT INTO CAZ_VICTIMA (id_caz, id_victima, rol_victima, status_victima, nivel_ranire)
+VALUES (8, 6, 'victima directa', 'spitalizata', 'grava');
+
+INSERT INTO CAZ_VICTIMA (id_caz, id_victima, rol_victima, status_victima, nivel_ranire)
+VALUES (8, 1, 'ruda victima indirecta', 'in viata - traumatizata', 'niciuna');
+
+COMMIT;
+
+-- CERINTA 6 PROIECT
+
+-- coletiile ce trebuie sa le folosesc:
+-- 1) tablouri indexate (index-by tables)
+-- 2) tablouri imbricate (nested tables)
+-- 3) vectori (varrays sau varying arrays)
+
+-- IMPLEMENTARE:
+
+-- predefinire tipuri de date!
+
+-- structura info departament
+CREATE OR REPLACE TYPE tip_info_departament AS OBJECT
+(
+    id_departament NUMBER,
+    nume_departament VARCHAR2(150),
+    cod_departament VARCHAR2(30),
+    nr_ofiteri NUMBER,
+    grad_ocupare VARCHAR2(20)
+);
+
+-- structura suspect periculos
+CREATE OR REPLACE TYPE tip_suspect_periculos AS OBJECT
+(
+    id_suspect NUMBER,
+    nume_complet VARCHAR2(100),
+    nivel_pericol VARCHAR2(20),
+    nr_cazuri_implicate NUMBER,
+    este_armat VARCHAR2(3),
+    ultimul_update DATE
+);
+
+-- NESTED TABLE pt lista dinamica de suspecti
+CREATE OR REPLACE TYPE colectie_suspecti_periculosi AS TABLE OF tip_suspect_periculos;
+
+-- structura pt caz complex
+CREATE OR REPLACE TYPE tip_caz_complex AS OBJECT
+(
+    pozitie_top NUMBER,
+    numar_caz VARCHAR2(50),
+    tip_infractiune VARCHAR2(100),
+    nr_probe_colectate NUMBER,
+    nr_probe_analizate NUMBER,
+    procent_analizat NUMBER,
+    status VARCHAR2(30),
+    prioritate VARCHAR2(20)
+);
+
+-- VARRAY pt top ul fix de 5 cazuri
+CREATE OR REPLACE TYPE colectie_top_cazuri AS VARRAY(5) OF tip_caz_complex;
+
+-- !!! PROCEDURA PRINCIPALA
+
+CREATE OR REPLACE PROCEDURE generator_raport (
+    p_id_sectie IN NUMBER,
+    p_data_raport IN DATE DEFAULT SYSDATE
+)
+AS
+    -- COLECTIE 1 ->>> index by table pt acces rapid la departamente
+    TYPE tip_colectie_departamente IS TABLE OF tip_info_departament INDEX BY PLS_INTEGER;
+    v_departamente tip_colectie_departamente;
+
+    -- COLECTIE 2 ->>> nested table pt lista dinamica de suspecti
+    v_suspecti_periculosi colectie_suspecti_periculosi;
+
+    -- COLECTIE 3 ->>> varray pt top 5 cazuri complexe
+    v_top_cazuri_complexe colectie_top_cazuri;
+
+    -- variabile auxiliare
+    v_nume_sectie VARCHAR2(100);
+    v_cod_sectie VARCHAR2(20);
+    v_total_ofiteri NUMBER := 0;
+    v_index_dept PLS_INTEGER := 1;
+    v_temp_grad VARCHAR2(20);
+
+BEGIN
+    -- verificare sectie
+    BEGIN
+        SELECT nume_sectie, cod_sectie
+        INTO v_nume_sectie, v_cod_sectie
+        FROM SECTIE_POLITIE
+        WHERE id_sectie = p_id_sectie;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RAISE_APPLICATION_ERROR(-20001,
+            'Sectia cu ID-ul ' || p_id_sectie || ' nu exista in sistem!!!');
+    END;
+
+    -- raport
+    DBMS_OUTPUT.PUT_LINE('--------- RAPORT INVESTIGATII -------------');
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE('Sectia: ' || v_nume_sectie || ' (' || v_cod_sectie || ')');
+    DBMS_OUTPUT.PUT_LINE('Data raport: ' || TO_CHAR(p_data_raport, 'DD-MONTH-YYYY HH24:MI'));
+    DBMS_OUTPUT.PUT_LINE('--------------------------------------------');
+
+    -- CERINTA 1 - situatia departamentelor cu index by table
+    DBMS_OUTPUT.PUT_LINE('****** Situatia departamentelor *******');
+
+    -- populare index by table
+    FOR rec_dept IN (
+        SELECT
+            d.id_departament,
+            d.nume_departament,
+            d.cod_departament,
+            COUNT(o.id_ofiter) AS nr_ofiteri
+        FROM DEPARTAMENT d
+        LEFT JOIN OFITER o ON d.id_departament = o.id_departament
+        WHERE d.id_sectie = p_id_sectie
+        GROUP BY d.id_departament, d.nume_departament, d.cod_departament
+        ORDER BY d.id_departament
+    ) LOOP
+        -- calculez gradul de ocupare bazat pe numarul de ofiteri
+        IF rec_dept.nr_ofiteri <= 2 THEN
+            v_temp_grad := 'SUBINCARCAT';
+        ELSIF rec_dept.nr_ofiteri <= 5 THEN
+            v_temp_grad := 'NORMAL';
+        ELSE
+            v_temp_grad := 'SUPRAINCARCAT';
+        END IF;
+
+        -- stocare in index by table
+        v_departamente(v_index_dept) := tip_info_departament(
+            rec_dept.id_departament,
+            rec_dept.nume_departament,
+            rec_dept.cod_departament,
+            rec_dept.nr_ofiteri,
+            v_temp_grad
+        );
+
+        v_total_ofiteri := v_total_ofiteri + rec_dept.nr_ofiteri;
+        v_index_dept := v_index_dept + 1;
+
+        END LOOP;
+
+        -- afisez departamentele
+        IF v_departamente.COUNT > 0 THEN
+            FOR i IN v_departamente.FIRST .. v_departamente.LAST LOOP
+                    DBMS_OUTPUT.PUT_LINE('Departament -> ' || i || ':');
+                    DBMS_OUTPUT.PUT_LINE('      Nume: ' || v_departamente(i).nume_departament);
+                    DBMS_OUTPUT.PUT_LINE('      Cod: ' || v_departamente(i).cod_departament);
+                    DBMS_OUTPUT.PUT_LINE('      Ofiteri: ' || v_departamente(i).nr_ofiteri);
+                    DBMS_OUTPUT.PUT_LINE('      Status: ' || v_departamente(i).grad_ocupare);
+                    DBMS_OUTPUT.PUT_LINE('');
+                END LOOP;
+            DBMS_OUTPUT.PUT_LINE('--->>> TOTAL DEPARTAMENTE: ' || v_departamente.COUNT);
+            DBMS_OUTPUT.PUT_LINE('--->>> TOTAL OFITERI IN SECTIE: ' || v_total_ofiteri);
+            DBMS_OUTPUT.PUT_LINE('--->>> MEDIE OFITERI PER DEPARTAMENT: ' ||
+                                 ROUND(v_total_ofiteri / v_departamente.COUNT, 2));
+
+            DBMS_OUTPUT.PUT_LINE('');
+        ELSE
+            DBMS_OUTPUT.PUT_LINE('!!! NU EXISTA DEPARTAMENTE IN ACEASTA SECTIE!!! ');
+        END IF;
+
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE('-----------------------------------');
+    DBMS_OUTPUT.PUT_LINE('');
+
+    -- CERINTA 2 - suspecti periculosi cu nested table
+    DBMS_OUTPUT.PUT_LINE('****** Suspecti periculosi recidivisti *******');
+
+    -- populare nested table cu bulk collect
+    BEGIN
+        SELECT tip_suspect_periculos(
+            s.id_suspect,
+            s.nume || ' ' || s.prenume,
+            s.nivel_pericol,
+            COUNT(DISTINCT cs.id_caz),
+            CASE WHEN s.armat = 'D' THEN 'DA' ELSE 'NU' END,
+            SYSDATE
+        )
+        BULK COLLECT INTO v_suspecti_periculosi
+        FROM SUSPECT s
+        INNER JOIN CAZ_SUSPECT cs ON s.id_suspect = cs.id_suspect
+        INNER JOIN CAZ c ON cs.id_caz = c.id_caz
+        INNER JOIN DEPARTAMENT d ON c.id_departament = d.id_departament
+        WHERE d.id_sectie = p_id_sectie
+          AND s.nivel_pericol IN ('ridicat', 'extrem')
+          AND cs.status_suspect NOT IN ('achitat', 'eliberat')
+        GROUP BY s.id_suspect, s.nume, s.prenume, s.nivel_pericol, s.armat
+        HAVING COUNT(DISTINCT cs.id_caz) >= 2
+        ORDER BY s.nivel_pericol DESC, COUNT(DISTINCT cs.id_caz) DESC;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            v_suspecti_periculosi := colectie_suspecti_periculosi(); -- colectie goala
+        WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE('Eroare la preluare suspecti: ' || SQLERRM);
+            v_suspecti_periculosi := colectie_suspecti_periculosi(); -- coletie goala
+    END;
+
+    -- afisez suspectii
+    IF v_suspecti_periculosi IS NOT NULL AND v_suspecti_periculosi.COUNT > 0 THEN
+        FOR i IN v_suspecti_periculosi.FIRST .. v_suspecti_periculosi.LAST LOOP
+            DBMS_OUTPUT.PUT_LINE('Suspect ->' || i || ' - RECIDIVIST PERICULOS');
+            DBMS_OUTPUT.PUT_LINE('  --->>> Nume: ' || v_suspecti_periculosi(i).nume_complet);
+            DBMS_OUTPUT.PUT_LINE('  --->>> Nivel pericol:  ' ||
+                               UPPER(v_suspecti_periculosi(i).nivel_pericol));
+            DBMS_OUTPUT.PUT_LINE('  --->>> Cazuri implicate: ' ||
+                               v_suspecti_periculosi(i).nr_cazuri_implicate);
+            DBMS_OUTPUT.PUT_LINE('  --->>> Armat: ' || v_suspecti_periculosi(i).este_armat);
+            DBMS_OUTPUT.PUT_LINE('  --->>> Actualizat: ' ||
+                               TO_CHAR(v_suspecti_periculosi(i).ultimul_update, 'DD-MON-YYYY'));
+            DBMS_OUTPUT.PUT_LINE('');
+        END LOOP;
+
+        DBMS_OUTPUT.PUT_LINE('---->>> Total suspecti periculosi identificati: ' ||
+                           v_suspecti_periculosi.COUNT);
+
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('!!! Nu exista suspecti recidivisti periculosi activi in sistem !!!');
+    END IF;
+
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE('-----------------------------------');
+    DBMS_OUTPUT.PUT_LINE('');
+
+    -- CERINTA 3 - top 5 cazuri complexe cu varray
+    DBMS_OUTPUT.PUT_LINE('****** Topul celor 5 cazuri cele mai complexe *******');
+
+    -- populare varray
+    BEGIN
+        SELECT tip_caz_complex(
+            ROW_NUMBER() OVER (ORDER BY COUNT(p.id_proba) DESC, c.prioritate_caz DESC),
+            c.numar_caz, c.tip_caz, COUNT(p.id_proba),
+            COUNT(CASE WHEN p.status_analiza IN ('analizata', 'rezultate disponibile')
+                  THEN 1 END),
+            CASE
+                WHEN COUNT(p.id_proba) > 0 THEN
+                    ROUND(COUNT(CASE WHEN p.status_analiza IN ('analizata', 'rezultate disponibile')
+                          THEN 1 END) * 100.0 / COUNT(p.id_proba), 1)
+                ELSE 0
+            END,
+            c.status_caz, c.prioritate_caz
+        )
+        BULK COLLECT INTO v_top_cazuri_complexe
+        FROM CAZ c
+        INNER JOIN DEPARTAMENT d ON c.id_departament = d.id_departament
+        LEFT JOIN PROBA p ON c.id_caz = p.id_caz
+        WHERE d.id_sectie = p_id_sectie
+          AND c.status_caz IN ('activ', 'in asteptare')
+        GROUP BY c.id_caz, c.numar_caz, c.tip_caz, c.status_caz, c.prioritate_caz
+        ORDER BY COUNT(p.id_proba) DESC, c.prioritate_caz DESC
+        FETCH FIRST 5 ROWS ONLY;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            v_top_cazuri_complexe := colectie_top_cazuri(); -- coletie goala
+        WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE('Eroare la preluare cazuri: ' || SQLERRM);
+            v_top_cazuri_complexe := colectie_top_cazuri(); -- colectie goala
+    END;
+
+    -- afisare top cazuri
+    IF v_top_cazuri_complexe IS NOT NULL AND v_top_cazuri_complexe.COUNT > 0 THEN
+        FOR i IN v_top_cazuri_complexe.FIRST .. v_top_cazuri_complexe.LAST LOOP
+            DBMS_OUTPUT.PUT_LINE('  Pozitia -> ' || v_top_cazuri_complexe(i).pozitie_top);
+            DBMS_OUTPUT.PUT_LINE('  --->>> Numar caz: ' || v_top_cazuri_complexe(i).numar_caz);
+            DBMS_OUTPUT.PUT_LINE('  --->>> Tip infractiune: ' || v_top_cazuri_complexe(i).tip_infractiune);
+            DBMS_OUTPUT.PUT_LINE('  --->>> Probe colectate: ' ||
+                               v_top_cazuri_complexe(i).nr_probe_colectate);
+            DBMS_OUTPUT.PUT_LINE('  --->>> Probe analizate: ' ||
+                               v_top_cazuri_complexe(i).nr_probe_analizate ||
+                               ' (' || v_top_cazuri_complexe(i).procent_analizat || '%)');
+            DBMS_OUTPUT.PUT_LINE('  --->>> Status: ' || v_top_cazuri_complexe(i).status);
+            DBMS_OUTPUT.PUT_LINE('  --->>> Prioritate: ' || v_top_cazuri_complexe(i).prioritate);
+            DBMS_OUTPUT.PUT_LINE('');
+        END LOOP;
+
+        DBMS_OUTPUT.PUT_LINE('---->>>> Total cazuri in top: ' || v_top_cazuri_complexe.COUNT || ' / 5');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('!!! Nu exista cazuri active cu probe colectate.');
+    END IF;
+
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE('-----------------------------------');
+    DBMS_OUTPUT.PUT_LINE('');
+
+EXCEPTION
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('');
+        DBMS_OUTPUT.PUT_LINE(' EROARE CRITICA IN GENERARE RAPORT: ' || SQLERRM);
+        DBMS_OUTPUT.PUT_LINE('BACKTRACE: ' || DBMS_UTILITY.FORMAT_ERROR_BACKTRACE);
+        RAISE;
+END generator_raport;
+
+-- apelarea procedurii
+BEGIN
+    DBMS_OUTPUT.PUT_LINE('Initiere generare raport .........');
+    generator_raport(
+        p_id_sectie => &id_sectie,
+        p_data_raport => SYSDATE
+    );
+END;
+
+-- CERINTA 7 PROIECT
+-- o sa avem nevoie sa implementam 2 tipuri de cursoare:
+-- 1) un cursor explicit (neparametrizat) ->> pt departamente - parcurge toate departamentele din sectie si nu este
+--    influentat (nu depinde de nimic)
+-- 2) un cursor parametrizat -->> pt ofiteri - parcurge ofiterii din departamentul curent si depinde de primul cursor
+--    deoarece primeste id_departament ca paramentru
+
+-- IMPLEMENTARE!!
+
+CREATE OR REPLACE PROCEDURE raport_departamente_ofiteri(
+    p_id_sectie IN NUMBER
+) AS
+    -- variabilele
+    v_nume_sectie VARCHAR2(100);
+    v_total_departamente NUMBER := 0;
+    v_total_ofiteri NUMBER := 0;
+    v_total_cazuri NUMBER := 0;
+    v_nume_specializare VARCHAR2(100);
+    v_nr_cazuri_dept NUMBER;
+    v_nr_cazuri_active NUMBER;
+    v_nr_cazuri_inchise NUMBER;
+
+    -- CURSORUL 1 - explicit pt departamentele din sectie
+    CURSOR c_departamente IS
+        SELECT
+            d.id_departament,
+            d.nume_departament,
+            d.cod_departament,
+            d.locatie_cladire,
+            d.numar_telefon,
+            d.id_specializare,
+            COUNT(DISTINCT o.id_ofiter) AS nr_ofiteri,
+            COUNT(DISTINCT c.id_caz) AS nr_cazuri
+        FROM DEPARTAMENT d
+        LEFT JOIN OFITER o ON d.id_departament = o.id_departament
+        LEFT JOIN CAZ c ON d.id_departament = c.id_departament
+        WHERE d.id_sectie = p_id_sectie
+        GROUP BY d.id_departament, d.nume_departament, d.cod_departament,
+                 d.locatie_cladire, d.numar_telefon, d.id_specializare
+        ORDER BY d.nume_departament;
+
+    -- CURSOR 2 - parametrizat, depinde de cursor 1, pt ofiterii din departamentul curent
+    -- primeste id_departament din cursorul 1
+    CURSOR c_ofiteri(p_id_departament NUMBER) IS
+        SELECT
+            o.id_ofiter,
+            o.cod_ofiter,
+            o.nume,
+            o.prenume,
+            o.pozitie,
+            o.data_angajare,
+            ROUND(MONTHS_BETWEEN(SYSDATE, o.data_angajare) / 12, 1) AS vechime_ani,
+            o.id_supervizor,
+            s.nume AS nume_supervizor,
+            s.prenume AS prenume_supervizor,
+            s.pozitie AS pozitie_supervizor
+        FROM OFITER o
+        LEFT JOIN OFITER s ON o.id_supervizor = s.id_ofiter
+        WHERE o.id_departament = p_id_departament
+        ORDER BY o.pozitie DESC, o.nume;
+
+    -- variabile pentru cursoare
+    rec_dept c_departamente%ROWTYPE;
+    rec_ofiter c_ofiteri%ROWTYPE;
+
+BEGIN
+    -- verificare si obtinere nume sectie
+    BEGIN
+        SELECT nume_sectie INTO v_nume_sectie
+        FROM SECTIE_POLITIE
+        WHERE id_sectie = p_id_sectie;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RAISE_APPLICATION_ERROR(-20001,
+                'Sectia cu ID ' || p_id_sectie || ' nu exista!');
+    END;
+
+    -- raport
+    DBMS_OUTPUT.PUT_LINE('***** RAPORT STRUCTURA DEPARTAMENTE SI OFITERI  ******');
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE('Sectia: ' || v_nume_sectie);
+    DBMS_OUTPUT.PUT_LINE('Data raport: ' || TO_CHAR(SYSDATE, 'DD-MON-YYYY HH24:MI'));
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE('----------------------------------------------------');
+    DBMS_OUTPUT.PUT_LINE('');
+
+    -- deschid cursorul 1 pt departamente
+    OPEN c_departamente;
+
+    LOOP
+        -- iau departamentul curent
+        FETCH c_departamente INTO rec_dept;
+        EXIT WHEN c_departamente%NOTFOUND;
+
+        v_total_departamente := v_total_departamente + 1;
+        v_total_ofiteri := v_total_ofiteri + rec_dept.nr_ofiteri;
+        v_total_cazuri := v_total_cazuri + rec_dept.nr_cazuri;
+
+        -- obtin nume specializare
+        BEGIN
+            SELECT nume_specializare INTO v_nume_specializare
+            FROM SPECIALIZARE
+            WHERE id_specializare = rec_dept.id_specializare;
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+                v_nume_specializare := 'N/A';
+        END;
+
+        -- statistici cazuri
+        BEGIN
+            SELECT
+                COUNT(CASE WHEN status_caz = 'activ' THEN 1 END),
+                COUNT(CASE WHEN status_caz = 'rezolvat' THEN 1 END)
+            INTO v_nr_cazuri_active, v_nr_cazuri_inchise
+            FROM CAZ
+            WHERE id_departament = rec_dept.id_departament;
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+                v_nr_cazuri_active := 0;
+                v_nr_cazuri_inchise := 0;
+        END;
+
+        -- informatii departament
+        DBMS_OUTPUT.PUT_LINE('  DEPARTAMENT -> ' || v_total_departamente);
+        DBMS_OUTPUT.PUT_LINE('  --->>> Nume: ' || rec_dept.nume_departament);
+        DBMS_OUTPUT.PUT_LINE('  --->>> Cod: ' || rec_dept.cod_departament);
+        DBMS_OUTPUT.PUT_LINE('  --->>> Specializare: ' || v_nume_specializare);
+        DBMS_OUTPUT.PUT_LINE('  --->>> Locatie: ' || NVL(rec_dept.locatie_cladire, 'N/A'));
+        DBMS_OUTPUT.PUT_LINE('  --->>> Telefon: ' || NVL(rec_dept.numar_telefon, 'N/A'));
+        DBMS_OUTPUT.PUT_LINE('  ─────────────────────────────────────────────');
+        DBMS_OUTPUT.PUT_LINE('  Statistici: ');
+        DBMS_OUTPUT.PUT_LINE('     -->> Total ofiteri: ' || rec_dept.nr_ofiteri);
+        DBMS_OUTPUT.PUT_LINE('     -->> Total cazuri: ' || rec_dept.nr_cazuri);
+        DBMS_OUTPUT.PUT_LINE('     -->> Cazuri active: ' || v_nr_cazuri_active);
+        DBMS_OUTPUT.PUT_LINE('     -->> Cazuri inchise: ' || v_nr_cazuri_inchise);
+        DBMS_OUTPUT.PUT_LINE('  ─────────────────────────────────────────────');
+
+        -- verific supraincarcarea departamentului
+        IF rec_dept.nr_cazuri > 20 THEN
+            DBMS_OUTPUT.PUT_LINE(' !!!!  ATENTIE: Departament cu volum mare de cazuri !!!');
+        END IF;
+
+        IF rec_dept.nr_ofiteri > 0 THEN
+            DBMS_OUTPUT.PUT_LINE('');
+            DBMS_OUTPUT.PUT_LINE('  LISTA OFITERI:');
+            DBMS_OUTPUT.PUT_LINE('');
+
+            -- deschid cursorul 2 parametrizat -> trimit id_departament din cursorul 1
+            OPEN c_ofiteri(rec_dept.id_departament);
+
+            LOOP
+                -- preiau ofiterul curent
+                FETCH c_ofiteri INTO rec_ofiter;
+                EXIT WHEN c_ofiteri%NOTFOUND;
+
+                -- informatii ofiter
+                DBMS_OUTPUT.PUT_LINE('     * Ofiter: ' || rec_ofiter.nume || ' ' || rec_ofiter.prenume);
+                DBMS_OUTPUT.PUT_LINE('     --->> Cod: ' || rec_ofiter.cod_ofiter);
+                DBMS_OUTPUT.PUT_LINE('     --->> Pozitie: ' || rec_ofiter.pozitie);
+                DBMS_OUTPUT.PUT_LINE('     --->> Data angajare: ' ||
+                                   TO_CHAR(rec_ofiter.data_angajare, 'DD-MON-YYYY'));
+                DBMS_OUTPUT.PUT_LINE('     --->> Vechime: ' || rec_ofiter.vechime_ani || ' ani');
+
+                -- informatii supervizor
+                IF rec_ofiter.id_supervizor IS NOT NULL THEN
+                    DBMS_OUTPUT.PUT_LINE('     --->> Supervizor: ' || rec_ofiter.nume_supervizor || ' ' ||
+                                       rec_ofiter.prenume_supervizor ||
+                                       ' (' || rec_ofiter.pozitie_supervizor || ')');
+                ELSE
+                    DBMS_OUTPUT.PUT_LINE('     !!! Supervizor: Nu are supervizor (pozitie de conducere)');
+                END IF;
+
+                -- avertizare pt vechime
+                IF rec_ofiter.vechime_ani < 1 THEN
+                    DBMS_OUTPUT.PUT_LINE('     ** Ofiter nou - necesita training');
+                ELSIF rec_ofiter.vechime_ani > 15 THEN
+                    DBMS_OUTPUT.PUT_LINE('     ** Ofiter senior - experienta vasta');
+                END IF;
+
+                DBMS_OUTPUT.PUT_LINE('');
+
+            END LOOP;
+
+            -- inchid cursorul parametrizat
+            CLOSE c_ofiteri;
+
+        ELSE
+            DBMS_OUTPUT.PUT_LINE('');
+            DBMS_OUTPUT.PUT_LINE('  Departamentul nu are ofiteri asignati');
+        END IF;
+
+        DBMS_OUTPUT.PUT_LINE('');
+        DBMS_OUTPUT.PUT_LINE('--------------------------------------------');
+        DBMS_OUTPUT.PUT_LINE('');
+
+    END LOOP;
+
+    -- inchid cursorul explicit pt departamente
+    CLOSE c_departamente;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        -- inchid cursoarele in caz de eroare
+        IF c_departamente%ISOPEN THEN
+            CLOSE c_departamente;
+        END IF;
+        IF c_ofiteri%ISOPEN THEN
+            CLOSE c_ofiteri;
+        END IF;
+
+        DBMS_OUTPUT.PUT_LINE('');
+        DBMS_OUTPUT.PUT_LINE(' EROARE: ' || SQLERRM);
+        RAISE;
+END raport_departamente_ofiteri;
+
+
+-- apelare procedura!!
+
+BEGIN
+    raport_departamente_ofiteri(1);
+END;
+
+
+-- CERINTA 8 PROIECT
+
+-- IMPLEMENTARE FUNCTIE
+
+CREATE OR REPLACE FUNCTION calculeaza_scor_departament(
+    p_id_departament IN NUMBER
+) RETURN NUMBER AS
+    -- variabile pt calcul spor
+    v_nr_ofiteri NUMBER := 0;
+    v_nr_cazuri NUMBER := 0;
+    v_nr_probe NUMBER := 0;
+    v_scor_total NUMBER := 0;
+    v_nume_departament VARCHAR2(100);
+
+    -- constante pt punctaj
+    c_puncte_ofiter CONSTANT NUMBER := 10;
+    c_puncte_caz CONSTANT NUMBER := 5;
+    c_puncte_proba CONSTANT NUMBER := 2;
+
+    -- exceptii personalizate
+    e_departament_invalid EXCEPTION;
+    e_date_inconsistente EXCEPTION;
+
+BEGIN
+    -- validare input
+    IF p_id_departament IS NULL THEN
+        RAISE e_departament_invalid;
+    END IF;
+
+    IF p_id_departament <= 0 THEN
+        RAISE e_departament_invalid;
+    END IF;
+
+    -- tabelele folosite sunt: DEPARTAMENT, OFITER, CAZ, PROBA
+    BEGIN
+        SELECT
+            d.nume_departament,
+            COUNT(DISTINCT o.id_ofiter) AS nr_ofiteri,
+            COUNT(DISTINCT c.id_caz) AS nr_cazuri,
+            COUNT(DISTINCT p.id_proba) AS nr_probe
+        INTO
+            v_nume_departament,
+            v_nr_ofiteri,
+            v_nr_cazuri,
+            v_nr_probe
+        FROM DEPARTAMENT d
+        LEFT JOIN OFITER o ON d.id_departament = o.id_departament
+        LEFT JOIN CAZ c ON d.id_departament = c.id_departament
+        LEFT JOIN PROBA p ON c.id_caz = p.id_caz
+        WHERE d.id_departament = p_id_departament
+        GROUP BY d.nume_departament, d.id_departament;
+
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            -- departamentul nu exista in baza de date
+            DBMS_OUTPUT.PUT_LINE('   EXCEPTIE NO_DATA_FOUND:');
+            DBMS_OUTPUT.PUT_LINE('   Departamentul cu ID ' || p_id_departament || ' nu exista!');
+            RETURN -1;
+
+        WHEN TOO_MANY_ROWS THEN
+            -- practic imposibil datorita GROUP BY
+            DBMS_OUTPUT.PUT_LINE('   EXCEPTIE TOO_MANY_ROWS:');
+            DBMS_OUTPUT.PUT_LINE('   Interogarea a returnat multiple randuri pentru ID ' || p_id_departament);
+            RETURN -2;
+    END;
+
+    -- verificam datele inconsistente
+    IF v_nr_ofiteri < 0 OR v_nr_cazuri < 0 OR v_nr_probe < 0 THEN
+        RAISE e_date_inconsistente;
+    END IF;
+
+    -- calcul efectiv scor
+    v_scor_total := (v_nr_ofiteri * c_puncte_ofiter) +
+                    (v_nr_cazuri * c_puncte_caz) +
+                    (v_nr_probe * c_puncte_proba);
+
+    -- afisare detalii calcul
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE('   CALCUL REUSIT pentru: ' || v_nume_departament);
+    DBMS_OUTPUT.PUT_LINE('   ─────────────────────────────────────');
+    DBMS_OUTPUT.PUT_LINE('   * Ofiteri activi: ' || v_nr_ofiteri ||
+                        ' × ' || c_puncte_ofiter || ' puncte = ' ||
+                        (v_nr_ofiteri * c_puncte_ofiter) || ' puncte');
+    DBMS_OUTPUT.PUT_LINE('   * Cazuri gestionate: ' || v_nr_cazuri ||
+                        ' × ' || c_puncte_caz || ' puncte = ' ||
+                        (v_nr_cazuri * c_puncte_caz) || ' puncte');
+    DBMS_OUTPUT.PUT_LINE('   * Probe colectate: ' || v_nr_probe ||
+                        ' × ' || c_puncte_proba || ' puncte = ' ||
+                        (v_nr_probe * c_puncte_proba) || ' puncte');
+    DBMS_OUTPUT.PUT_LINE('   ─────────────────────────────────────');
+    DBMS_OUTPUT.PUT_LINE('   SCOR TOTAL: ' || v_scor_total || ' puncte');
+    DBMS_OUTPUT.PUT_LINE('');
+
+    RETURN v_scor_total;
+
+EXCEPTION
+    WHEN e_departament_invalid THEN
+        DBMS_OUTPUT.PUT_LINE('   EXCEPTIE PERSONALIZATA (e_departament_invalid):');
+        DBMS_OUTPUT.PUT_LINE('   ID departament invalid: ' || NVL(TO_CHAR(p_id_departament), 'NULL'));
+        RETURN -3;
+
+    WHEN e_date_inconsistente THEN
+        DBMS_OUTPUT.PUT_LINE('   EXCEPTIE PERSONALIZATA (e_date_inconsistente):');
+        DBMS_OUTPUT.PUT_LINE('   Date negative sau inconsistente detectate!');
+        RETURN -4;
+
+    WHEN VALUE_ERROR THEN
+        DBMS_OUTPUT.PUT_LINE('   EXCEPTIE VALUE_ERROR:');
+        DBMS_OUTPUT.PUT_LINE('   Eroare de conversie sau valoare invalida!');
+        DBMS_OUTPUT.PUT_LINE('   Detalii: ' || SQLERRM);
+        RETURN -5;
+
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('   EXCEPTIE GENERALA NETRATATA:');
+        DBMS_OUTPUT.PUT_LINE('   Cod eroare: ' || SQLCODE);
+        DBMS_OUTPUT.PUT_LINE('   Mesaj: ' || SQLERRM);
+        RETURN -99;
+
+END calculeaza_scor_departament;
+
+-- tratare diferite cazuri
+DECLARE
+    v_scor NUMBER;
+BEGIN
+    DBMS_OUTPUT.PUT_LINE('*******  TESTEEE ***********');
+    DBMS_OUTPUT.PUT_LINE('');
+
+    -- departament existent cu date - caz normal
+    DBMS_OUTPUT.PUT_LINE('-------------------------------------------');
+    DBMS_OUTPUT.PUT_LINE('TEST 1: Departament VALID cu date complete');
+
+    v_scor := calculeaza_scor_departament(1); -- exista acest departament
+
+    IF v_scor >= 0 THEN
+        DBMS_OUTPUT.PUT_LINE('  Rezultat: Scor calculat = ' || v_scor);
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  Rezultat: Cod eroare = ' || v_scor);
+    END IF;
+
+    DBMS_OUTPUT.PUT_LINE('');
+
+    -- test 2 -->> departament inexistent -- pt NO_DATA_FOUND
+    DBMS_OUTPUT.PUT_LINE('-------------------------------------------');
+    DBMS_OUTPUT.PUT_LINE('TEST 2: Departament INEXISTENT (NO_DATA_FOUND)');
+
+    v_scor := calculeaza_scor_departament(99999);  -- ID inexistent
+
+    IF v_scor = -1 THEN
+        DBMS_OUTPUT.PUT_LINE('  Rezultat: Exceptie NO_DATA_FOUND tratata corect!');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  Rezultat: Cod eroare = ' || v_scor);
+    END IF;
+
+    DBMS_OUTPUT.PUT_LINE('');
+
+    -- test 3 -- input null
+    DBMS_OUTPUT.PUT_LINE('-------------------------------------------');
+    DBMS_OUTPUT.PUT_LINE('TEST 3: Input NULL (Validare)');
+
+    v_scor := calculeaza_scor_departament(NULL);
+
+    IF v_scor = -3 THEN
+        DBMS_OUTPUT.PUT_LINE('  Rezultat: Input invalid tratat corect!');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  Rezultat: Cod eroare = ' || v_scor);
+    END IF;
+
+    DBMS_OUTPUT.PUT_LINE('');
+
+    -- test 4 -- input negativ!!
+    DBMS_OUTPUT.PUT_LINE('-------------------------------------------');
+    DBMS_OUTPUT.PUT_LINE('TEST 4: Input NEGATIV (Validare)');
+
+    v_scor := calculeaza_scor_departament(-5);
+
+    IF v_scor = -3 THEN
+        DBMS_OUTPUT.PUT_LINE('  Rezultat: Input invalid tratat corect!');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  Rezultat: Cod eroare = ' || v_scor);
+    END IF;
+
+    DBMS_OUTPUT.PUT_LINE('');
+
+    -- test 5 --- departament fara ofiteri/cazuri, cu scor 0
+    DBMS_OUTPUT.PUT_LINE('-------------------------------------------');
+    DBMS_OUTPUT.PUT_LINE('TEST 5: Departament GOL (fara ofiteri/cazuri)');
+
+    -- pt departamentele 4, 5, 6, etc nu am ofiteri
+    v_scor := calculeaza_scor_departament(5);
+
+    IF v_scor >= 0 THEN
+        DBMS_OUTPUT.PUT_LINE('  Rezultat: Scor = ' || v_scor || ' (departament fara activitate)');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('  Rezultat: Cod eroare = ' || v_scor);
+    END IF;
+END;
+
+-- afisez scorurile pt toate departamentele (utilizez subprogramul si in select)
+SELECT
+    d.id_departament,
+    d.nume_departament,
+    d.cod_departament,
+    calculeaza_scor_departament(d.id_departament) AS scor_performanta
+FROM DEPARTAMENT d
+ORDER BY calculeaza_scor_departament(d.id_departament) DESC;
+
+
+-- CERINTA 9 PROIECT
+
+-- IMPLEMENTARE!!!
+CREATE OR REPLACE PROCEDURE transfer_caz_departament(
+    p_id_caz IN NUMBER,
+    p_id_dept_destinatie IN NUMBER
+) AS
+    -- exceptii personalizate
+    ex_departament_supraincarcat EXCEPTION;
+    ex_conflict_sectie EXCEPTION;
+    ex_caz_netransferabil EXCEPTION;
+
+    -- variabilele pentru departamentul sursa
+    v_id_dept_sursa NUMBER;
+    v_nume_dept_sursa VARCHAR2(150);
+    v_id_sectie_sursa NUMBER;
+
+    -- declarare variabile
+    v_numar_caz VARCHAR2(50);
+    v_tip_caz VARCHAR2(100);
+    v_status_caz VARCHAR2(30);
+    v_prioritate VARCHAR2(20);
+    v_data_incident DATE;
+
+    v_nume_dept_dest VARCHAR2(150);
+    v_cod_dept_dest VARCHAR2(30);
+
+    v_nume_sectie VARCHAR2(100);
+    v_id_sectie_dest NUMBER;
+
+    v_nr_suspecti NUMBER;
+    v_nr_probe NUMBER;
+    v_nr_cazuri_dest NUMBER;
+
+    v_caz_exista NUMBER;
+    v_dept_exista NUMBER;
+
+BEGIN
+    DBMS_OUTPUT.PUT_LINE('----------------------------------------------------');
+    DBMS_OUTPUT.PUT_LINE('*********** TRANSFER CAZ LA DEPARTAMENT NOU ***********');
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE('Parametri:');
+    DBMS_OUTPUT.PUT_LINE('  -->> ID Caz: ' || p_id_caz);
+    DBMS_OUTPUT.PUT_LINE('  -->> ID Departament destinatie: ' || p_id_dept_destinatie);
+    DBMS_OUTPUT.PUT_LINE('');
+
+    -- validare 1: verificam daca acel caz exista
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE('-----------------------------------------------');
+    DBMS_OUTPUT.PUT_LINE(' ** PASUL 1: Validare existenta caz **');
+
+    BEGIN
+        SELECT COUNT(*) INTO v_caz_exista
+        FROM CAZ WHERE id_caz = p_id_caz;
+
+        IF v_caz_exista = 0 THEN
+            RAISE NO_DATA_FOUND;
+        END IF;
+
+        DBMS_OUTPUT.PUT_LINE(' VALIDAT -> Cazul cu ID ' || p_id_caz || ' exista');
+
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            DBMS_OUTPUT.PUT_LINE(' !!! EROARE: Cazul nu exista!');
+            RAISE_APPLICATION_ERROR(-20001,
+                'Cazul cu ID ' || p_id_caz || ' nu exista!');
+    END;
+
+    -- validare 2: verificam daca departamentul de destinatie exista
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE('-----------------------------------------------');
+    DBMS_OUTPUT.PUT_LINE(' ** PASUL 2: Validare departament destinatie **');
+
+    BEGIN
+        SELECT COUNT(*) INTO v_dept_exista
+        FROM DEPARTAMENT WHERE id_departament = p_id_dept_destinatie;
+
+        IF v_dept_exista = 0 THEN
+            RAISE NO_DATA_FOUND;
+        END IF;
+
+        DBMS_OUTPUT.PUT_LINE(' VALIDAT -> Departamentul destinatie exista');
+
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            DBMS_OUTPUT.PUT_LINE(' !!!! EROARE: Departamentul nu exista!');
+            RAISE_APPLICATION_ERROR(-20002,
+                'Departamentul cu ID ' || p_id_dept_destinatie || ' nu exista!');
+    END;
+
+    -- trebuie sa fac preluarea departamentului sursa
+    SELECT d.id_departament, d.nume_departament, d.id_sectie
+    INTO v_id_dept_sursa, v_nume_dept_sursa, v_id_sectie_sursa
+    FROM CAZ c
+    INNER JOIN DEPARTAMENT d ON c.id_departament = d.id_departament
+    WHERE c.id_caz = p_id_caz;
+
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE('----------------------------------------------------');
+    DBMS_OUTPUT.PUT_LINE(' *** PASUL 3: PRELUARE DATE ***');
+
+    BEGIN
+        SELECT
+            -- datele din tabela CAZ
+            c.numar_caz,
+            c.tip_caz,
+            c.status_caz,
+            c.prioritate_caz,
+            c.data_incidentului,
+            -- datele din tabela DEPARTAMENT --- cel de destinatie
+            d.nume_departament AS dept_dest,
+            d.cod_departament AS cod_dest,
+            -- datele din tabla SECTIE_POLITIE
+            s.nume_sectie,
+            s.id_sectie,
+            -- datele din tabela CAZ_SUSPECT
+            COUNT(DISTINCT cs.id_suspect) AS nr_suspecti,
+            -- datele din tabela PROBA
+            COUNT(DISTINCT p.id_proba) AS nr_probe
+        INTO
+            v_numar_caz, v_tip_caz, v_status_caz, v_prioritate, v_data_incident,
+            v_nume_dept_dest, v_cod_dept_dest,
+            v_nume_sectie, v_id_sectie_dest,
+            v_nr_suspecti,
+            v_nr_probe
+        FROM CAZ c
+        INNER JOIN DEPARTAMENT d
+            ON d.id_departament = p_id_dept_destinatie
+        INNER JOIN SECTIE_POLITIE s
+            ON d.id_sectie = s.id_sectie
+        LEFT JOIN CAZ_SUSPECT cs
+            ON c.id_caz = cs.id_caz
+        LEFT JOIN PROBA p
+            ON c.id_caz = p.id_caz
+        WHERE c.id_caz = p_id_caz
+        GROUP BY
+            c.numar_caz, c.tip_caz, c.status_caz, c.prioritate_caz, c.data_incidentului,
+            d.nume_departament, d.cod_departament,
+            s.nume_sectie, s.id_sectie;
+
+    DBMS_OUTPUT.PUT_LINE(' Validat: Datele s-au preluat cu succes!');
+
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            DBMS_OUTPUT.PUT_LINE(' !!! EROARE la preluare date!');
+            RAISE_APPLICATION_ERROR(-20003, 'Eroare la preluare informatii!');
+    END;
+
+    -- afisez informatiile preluate
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE(' ^^ INFORMATII PRELUATE: ^^');
+    DBMS_OUTPUT.PUT_LINE('  --- Caz:');
+    DBMS_OUTPUT.PUT_LINE('      -->> Numar: ' || v_numar_caz);
+    DBMS_OUTPUT.PUT_LINE('      -->> Tip: ' || v_tip_caz);
+    DBMS_OUTPUT.PUT_LINE('      -->> Status: ' || v_status_caz);
+    DBMS_OUTPUT.PUT_LINE('      -->> Prioritate: ' || v_prioritate);
+    DBMS_OUTPUT.PUT_LINE('      -->> Data incident: ' || TO_CHAR(v_data_incident, 'DD-MON-YYYY'));
+    DBMS_OUTPUT.PUT_LINE('      -->> Suspecti: ' || v_nr_suspecti);
+    DBMS_OUTPUT.PUT_LINE('      -->> Probe: ' || v_nr_probe);
+    DBMS_OUTPUT.PUT_LINE('  --- Departament SURSA:');
+    DBMS_OUTPUT.PUT_LINE('      -->> Nume: ' || v_nume_dept_sursa);
+    DBMS_OUTPUT.PUT_LINE('      -->> ID Sectie: ' || v_id_sectie_sursa);
+    DBMS_OUTPUT.PUT_LINE('  --- Departament DESTINATIE:');
+    DBMS_OUTPUT.PUT_LINE('      -->> Nume: ' || v_nume_dept_dest);
+    DBMS_OUTPUT.PUT_LINE('      -->> Cod: ' || v_cod_dept_dest);
+    DBMS_OUTPUT.PUT_LINE('  --- Sectie:');
+    DBMS_OUTPUT.PUT_LINE('      -->> Nume: ' || v_nume_sectie);
+    DBMS_OUTPUT.PUT_LINE('      -->> ID: ' || v_id_sectie_dest);
+
+    -- calculez nr de cazuri din departamentul de destinatie
+    SELECT COUNT(*) INTO v_nr_cazuri_dest
+    FROM CAZ
+    WHERE id_departament = p_id_dept_destinatie
+      AND status_caz IN ('activ', 'in asteptare');
+
+    DBMS_OUTPUT.PUT_LINE('  - Cazuri active: ' || v_nr_cazuri_dest);
+
+    -- validari personalizate
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE('--------------------------------');
+    DBMS_OUTPUT.PUT_LINE(' *** PASUL 4: Validari personalizate ***');
+
+    -- exceptie personalizata: transfer in acelasi departament!!
+    IF v_id_dept_sursa = p_id_dept_destinatie THEN
+        DBMS_OUTPUT.PUT_LINE(' !!! EROARE: Cazul este deja in acest departament!');
+        RAISE_APPLICATION_ERROR(-20004,
+            ' !!! Cazul este deja in departamentul specificat!');
+    END IF;
+    DBMS_OUTPUT.PUT_LINE(' VALIDAT -> Departamente diferite');
+
+    -- exceptie personalizata: verificare pentru status caz sa poata fi in continuare validat
+    IF v_status_caz NOT IN ('activ', 'in asteptare', 'suspendat') THEN
+        DBMS_OUTPUT.PUT_LINE(' !!! EXCEPȚIE: Caz netransferabil!');
+        DBMS_OUTPUT.PUT_LINE('  --->> Status: ' || v_status_caz);
+        RAISE ex_caz_netransferabil;
+    END IF;
+    DBMS_OUTPUT.PUT_LINE(' VALIDAT -> Status: Transferabil');
+
+    -- exceptie personalizata: conflict de sectie ! sa am aceeasi sectie la departamente
+    IF v_id_sectie_sursa != v_id_sectie_dest THEN
+        DBMS_OUTPUT.PUT_LINE(' !!!! EXCEPTIE: Conflict de sectie!');
+        DBMS_OUTPUT.PUT_LINE('  --->> Sursa: Sectia ' || v_id_sectie_sursa);
+        DBMS_OUTPUT.PUT_LINE('  --->> Destinatie: Sectia ' || v_id_sectie_dest);
+        RAISE ex_conflict_sectie;
+    END IF;
+    DBMS_OUTPUT.PUT_LINE(' VALIDAT -> Aceeasi sectie');
+
+    -- exceptie personalizata: verificarea supraincarcarii unui departament
+    IF v_nr_cazuri_dest >= 10 THEN
+        DBMS_OUTPUT.PUT_LINE('!!! EXCEPȚIE: Departament supraincarcat!');
+        DBMS_OUTPUT.PUT_LINE('  -->> Cazuri: ' || v_nr_cazuri_dest || ' / 10');
+        RAISE ex_departament_supraincarcat;
+    END IF;
+    DBMS_OUTPUT.PUT_LINE(' VALIDAT -> Capacitate OK (' || v_nr_cazuri_dest || ' / 10)');
+
+    -- executie efectiva transfer
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE('---------------------------------------------');
+    DBMS_OUTPUT.PUT_LINE(' *** PASUL 5: Executie transfer ***');
+
+    UPDATE CAZ
+    SET id_departament = p_id_dept_destinatie,
+        status_caz = 'activ'
+    WHERE id_caz = p_id_caz;
+
+    COMMIT;
+
+    DBMS_OUTPUT.PUT_LINE(' VERIFICARE --->>> Transfer executat cu succes!');
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE(' - REZUMAT:');
+    DBMS_OUTPUT.PUT_LINE('  --->>> Caz: ' || v_numar_caz || ' (' || v_tip_caz || ')');
+    DBMS_OUTPUT.PUT_LINE('  --->>> DE LA: ' || v_nume_dept_sursa);
+    DBMS_OUTPUT.PUT_LINE('  --->>> CATRE: ' || v_nume_dept_dest);
+    DBMS_OUTPUT.PUT_LINE('  --->>> Sectie: ' || v_nume_sectie);
+    DBMS_OUTPUT.PUT_LINE('  --->>> Elemente transferate:');
+    DBMS_OUTPUT.PUT_LINE('         - Suspecti: ' || v_nr_suspecti);
+    DBMS_OUTPUT.PUT_LINE('         - Probe: ' || v_nr_probe);
+    DBMS_OUTPUT.PUT_LINE('  --->>> Noi cazuri dept. destinatie: ' || (v_nr_cazuri_dest + 1) || ' / 10');
+    DBMS_OUTPUT.PUT_LINE('');
+
+EXCEPTION
+    WHEN ex_caz_netransferabil THEN
+        ROLLBACK;
+        DBMS_OUTPUT.PUT_LINE('');
+        DBMS_OUTPUT.PUT_LINE(' !!! EROARE: CAZ NETRANSFERABIL !!!');
+        DBMS_OUTPUT.PUT_LINE('Status "' || v_status_caz || '" nu permite transfer.');
+        DBMS_OUTPUT.PUT_LINE('Statusuri valide: activ, in asteptare, suspendat');
+        RAISE_APPLICATION_ERROR(-20103,
+            'Cazul are status "' || v_status_caz || '" - netransferabil!');
+
+    WHEN ex_conflict_sectie THEN
+        ROLLBACK;
+        DBMS_OUTPUT.PUT_LINE('');
+        DBMS_OUTPUT.PUT_LINE(' !!! EROARE: CONFLICT DE SECTIE !!!');
+        DBMS_OUTPUT.PUT_LINE('Transfer inter-sectii necesita aprobare superioara!');
+        RAISE_APPLICATION_ERROR(-20102, 'Conflict sectie!');
+
+    WHEN ex_departament_supraincarcat THEN
+        ROLLBACK;
+        DBMS_OUTPUT.PUT_LINE('');
+        DBMS_OUTPUT.PUT_LINE(' !!! EROARE: CAZ NETRANSFERABIL !!!');
+        DBMS_OUTPUT.PUT_LINE('Departamentul are ' || v_nr_cazuri_dest || ' cazuri active.');
+        DBMS_OUTPUT.PUT_LINE('Limita: 10 cazuri per departament');
+        RAISE_APPLICATION_ERROR(-20101,
+            'Departament supraincarcat: ' || v_nr_cazuri_dest || ' / 10 cazuri!');
+
+    WHEN NO_DATA_FOUND THEN
+        ROLLBACK;
+        DBMS_OUTPUT.PUT_LINE('');
+        DBMS_OUTPUT.PUT_LINE('!!! EROARE: Date negasite!');
+        RAISE;
+
+    WHEN OTHERS THEN
+        ROLLBACK;
+        DBMS_OUTPUT.PUT_LINE('');
+        DBMS_OUTPUT.PUT_LINE('!!! EROARE: ' || SQLERRM);
+        RAISE;
+END transfer_caz_departament;
+
+-- teste
+-- caz 1 -> transfer cu succes
+BEGIN
+    transfer_caz_departament(p_id_caz => 1, p_id_dept_destinatie => 2);
+END;
+
+-- caz 2 -> pt caz indexistent
+BEGIN
+    transfer_caz_departament(p_id_caz => 9999, p_id_dept_destinatie => 2);
+EXCEPTION WHEN OTHERS THEN
+    DBMS_OUTPUT.PUT_LINE('Eroare: ' || SQLERRM);
+END;
+
+-- caz 3 -> pt departament inexistent
+BEGIN
+    transfer_caz_departament(p_id_caz => 1, p_id_dept_destinatie => 9999);
+EXCEPTION WHEN OTHERS THEN
+    DBMS_OUTPUT.PUT_LINE('Eroare: ' || SQLERRM);
+END;
+
+-- caz 4 -> pt conflictul de sectie
+BEGIN
+    transfer_caz_departament(p_id_caz => 1, p_id_dept_destinatie => 4);
+EXCEPTION WHEN OTHERS THEN
+    DBMS_OUTPUT.PUT_LINE('Eroare: ' || SQLERRM);
+END;
+
+-- caz 5 -> daca cazul este din acelasi departament
+BEGIN
+    transfer_caz_departament(p_id_caz => 1, p_id_dept_destinatie => 1);
+EXCEPTION WHEN OTHERS THEN
+    DBMS_OUTPUT.PUT_LINE('Eroare: ' || SQLERRM);
+END;
+
+-- caz 6 -> daca cazul nu este in disponibilitate de a fi transferat
+BEGIN
+    transfer_caz_departament(p_id_caz => 3, p_id_dept_destinatie => 1);
+EXCEPTION WHEN OTHERS THEN
+    DBMS_OUTPUT.PUT_LINE('Eroare: ' || SQLERRM);
+END;
+
+-- CERINTA 10 PROIECT
+
+-- trigger la nivel de comanda!!! se executa o singura data per comanda
+-- audiez toate critice pe tabelul CAZ
+
+-- IMPLEMENTARE!!
+-- creez o tabla pentru a salva audit ul pentru cazuri
+CREATE TABLE audit_cazuri (
+    id_audit NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tip_operatie VARCHAR2(10) NOT NULL, -- pt INSERT/UPDATE/DELETE
+    nume_tabel VARCHAR2(50) DEFAULT 'CAZ',
+    utilizator VARCHAR2(100),
+    data_operatie TIMESTAMP DEFAULT SYSTIMESTAMP,
+    detalii_operatie VARCHAR2(500),
+    CONSTRAINT ck_tip_operatie CHECK (tip_operatie IN ('INSERT', 'UPDATE', 'DELETE'))
+);
+
+-- trigger ul efectiv la nivel de comanda
+CREATE OR REPLACE TRIGGER trigger_audit_cazuri
+    AFTER INSERT OR UPDATE OR DELETE ON CAZ
+DECLARE
+    v_tip_operatie VARCHAR2(10);
+    v_detalii VARCHAR2(500);
+    v_user VARCHAR2(100);
+BEGIN
+    -- determin tipul de operatie
+    IF INSERTING THEN
+        v_tip_operatie := 'INSERT';
+        v_detalii := 'Cazuri noi adaugate in sistem';
+    ELSIF UPDATING THEN
+        v_tip_operatie := 'UPDATE';
+        v_detalii := 'Cazuri existente modificate';
+    ELSIF DELETING THEN
+        v_tip_operatie := 'DELETE';
+        v_detalii := 'Cazuri sterse din sistem';
+    END IF;
+
+    -- preluez informatiile legale de utilizator
+    v_user := USER;  -- utilizatorul curent
+
+    -- inregistrez in tabela de audit
+    INSERT INTO audit_cazuri (
+        tip_operatie,
+        utilizator,
+        detalii_operatie
+    ) VALUES (v_tip_operatie,v_user,v_detalii);
+
+    -- afisez un mesaj
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE(' **** REZULTATE TRIGGER **** ');
+    DBMS_OUTPUT.PUT_LINE('  -->> Operatie: ' || v_tip_operatie);
+    DBMS_OUTPUT.PUT_LINE('  -->> Utilizator: ' || v_user);
+    DBMS_OUTPUT.PUT_LINE('  -->> Data: ' || TO_CHAR(SYSTIMESTAMP, 'DD-MON-YYYY HH24:MI:SS'));
+    DBMS_OUTPUT.PUT_LINE('  -->> Tabel: CAZ');
+    DBMS_OUTPUT.PUT_LINE('  -->> Status: Inregistrat in audit');
+    DBMS_OUTPUT.PUT_LINE('');
+
+EXCEPTION
+    WHEN OTHERS THEN
+        -- nu opresc operatia principala daca audit ul esueaza
+        -- nu fac nici RAISE ca sa nu blochez operatia principala
+        DBMS_OUTPUT.PUT_LINE('ATENTIE: Eroare la inregistrare audit: ' || SQLERRM);
+END trigger_audit_cazuri;
+
+-- verific trigger ul creat
+SELECT trigger_name, trigger_type, triggering_event, table_name, status
+FROM user_triggers
+WHERE trigger_name = 'TRIGGER_AUDIT_CAZURI';
+
+-- teste pentru trigger!!!
+-- test 1: caz de inserare a unui caz
+INSERT INTO CAZ (
+    id_departament, numar_caz, tip_caz, prioritate_caz, status_caz,
+    data_incidentului, data_raportare, data_deschidere_caz, oras, tara
+) VALUES (
+    1, 'TRG-TEST-001', 'Test Trigger Insert Simple', 'medie', 'activ',
+    SYSTIMESTAMP, SYSTIMESTAMP, SYSDATE, 'Bucuresti', 'Romania'
+);
+
+-- verific auditul
+SELECT id_audit, tip_operatie, utilizator,
+       TO_CHAR(data_operatie, 'DD-MON-YYYY HH24:MI:SS') AS data,
+       detalii_operatie
+FROM audit_cazuri
+ORDER BY id_audit DESC
+FETCH FIRST 1 ROW ONLY;
+
+-- test 2: caz de inserare multipla, pt a demonstra ca triggerul se activeaza o singura data pt toata comanda
+INSERT INTO CAZ (
+    id_departament, numar_caz, tip_caz, prioritate_caz, status_caz,
+    data_incidentului, data_raportare, data_deschidere_caz, oras, tara
+)
+SELECT
+    1 + MOD(LEVEL, 2),
+    'TRG-TEST-' || LPAD(1 + LEVEL, 3, '0'),
+    'Test Trigger Insert Multiplu ' || LEVEL,
+    CASE MOD(LEVEL, 3)
+        WHEN 0 THEN 'medie'
+        WHEN 1 THEN 'ridicata'
+        ELSE 'critica'
+    END,
+    'activ',
+    SYSTIMESTAMP - INTERVAL '1' DAY * LEVEL,
+    SYSTIMESTAMP - INTERVAL '1' HOUR * LEVEL,
+    SYSDATE,
+    CASE MOD(LEVEL, 3)
+        WHEN 0 THEN 'Bucuresti'
+        WHEN 1 THEN 'Cluj-Napoca'
+        ELSE 'Timisoara'
+    END,
+    'Romania'
+FROM dual
+CONNECT BY LEVEL <= 3;
+
+-- verific auditul
+SELECT id_audit, tip_operatie, utilizator,
+       TO_CHAR(data_operatie, 'DD-MON-YYYY HH24:MI:SS') AS data
+FROM audit_cazuri
+ORDER BY id_audit DESC
+FETCH FIRST 2 ROWS ONLY;
+
+-- test 3: caz de update multiplu (trigger tot o singura data)
+UPDATE CAZ
+SET status_caz = 'suspendat',
+    prioritate_caz = 'urgenta maxima'
+WHERE numar_caz LIKE 'TRG-TEST%';
+
+-- verificare audit
+SELECT id_audit, tip_operatie, utilizator, detalii_operatie
+FROM audit_cazuri
+WHERE tip_operatie = 'UPDATE'
+ORDER BY id_audit DESC
+FETCH FIRST 1 ROW ONLY;
+
+-- test 4: caz de delete
+DELETE FROM CAZ
+WHERE numar_caz LIKE 'TRG-TEST-001';
+
+-- verificare audit
+SELECT id_audit, tip_operatie, utilizator, detalii_operatie
+FROM audit_cazuri
+WHERE tip_operatie = 'DELETE'
+ORDER BY id_audit DESC
+FETCH FIRST 1 ROW ONLY;
+
+-- test 5: caz de delete pentru linii multiple
+DELETE FROM CAZ
+WHERE numar_caz BETWEEN 'TRG-TEST-002' AND 'TRG-TEST-004';
+
+-- verificare audit
+SELECT id_audit, tip_operatie, utilizator,
+       TO_CHAR(data_operatie, 'DD-MON-YYYY HH24:MI:SS') AS data_operatie
+FROM audit_cazuri
+WHERE tip_operatie = 'DELETE'
+ORDER BY id_audit DESC
+FETCH FIRST 2 ROWS ONLY;
+
+-- statistici complete
+SELECT
+    tip_operatie,
+    COUNT(*) AS numar_operatii,
+    MIN(data_operatie) AS prima_operatie,
+    MAX(data_operatie) AS ultima_operatie,
+    utilizator
+FROM audit_cazuri
+GROUP BY tip_operatie, utilizator
+ORDER BY ultima_operatie DESC;
+
+-- istoric complet operatii de la audit
+SELECT
+    id_audit,
+    tip_operatie,
+    TO_CHAR(data_operatie, 'DD-MON-YYYY HH24:MI:SS') AS data_operatie,
+    utilizator,
+    detalii_operatie
+FROM audit_cazuri
+ORDER BY data_operatie DESC;
+
+COMMIT;
+
+
+-- CERINTA 11 PROIECT
+-- TRIGGER LMD LA NIVEL DE LINIE!!!
+-- se executa pt fiecare rand afectat
+-- are acces la :OLD si :NEW
+
+-- creez un trigger pentru tabela PROBA care sa inregistreze fiecare modificare individuala
+-- vreau sa retin valorile vechi si noi ale campurilor importante, tipul operatiei, cine a facut modificarwa si cand,
+-- care camp specific a fost modificat pentru cazul de update
+
+-- creez o tabela de audit pentru probe
+CREATE TABLE audit_probe_detaliat (
+    id_audit_proba NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    id_proba NUMBER,
+    tip_operatie VARCHAR2(10) NOT NULL,
+    camp_modificat VARCHAR2(50),
+    valoare_veche VARCHAR2(500),
+    valoare_noua VARCHAR2(500),
+    utilizator VARCHAR2(100),
+    data_modificare TIMESTAMP DEFAULT SYSTIMESTAMP,
+    numar_evidenta_proba VARCHAR2(100),
+    detalii VARCHAR2(500),
+    CONSTRAINT ck_audit_proba_tip CHECK (tip_operatie IN ('INSERT', 'UPDATE', 'DELETE'))
+);
+
+-- implementarea triggerului la nivel de linie
+CREATE OR REPLACE TRIGGER trigger_audit_probe_linie
+    AFTER INSERT OR UPDATE OR DELETE ON PROBA
+    FOR EACH ROW  -- trigger nivel de linie!!!!
+DECLARE
+    v_tip_operatie VARCHAR2(10);
+    v_utilizator VARCHAR2(100);
+    v_numar_evidenta VARCHAR2(100);
+BEGIN
+    -- determin utilizatorul
+    v_utilizator := USER;
+
+    -- determin un numar de evidenta
+    IF INSERTING OR UPDATING THEN
+        v_numar_evidenta := :NEW.numar_evidenta;
+    ELSE
+        v_numar_evidenta := :OLD.numar_evidenta;
+    END IF;
+
+    -- cazul 1 --->> INSERT pt o proba noua adaugata
+    IF INSERTING THEN
+        v_tip_operatie := 'INSERT';
+
+        INSERT INTO audit_probe_detaliat (
+            id_proba, tip_operatie, camp_modificat,
+            valoare_veche, valoare_noua,
+            utilizator, numar_evidenta_proba, detalii
+        ) VALUES (
+            :NEW.id_proba,
+            v_tip_operatie,
+            'PROBA_NOUA',
+            NULL,  -- nu am o valoare veche
+            'Nr: ' || :NEW.numar_evidenta || ', Tip: ' || :NEW.tip_proba,
+            v_utilizator,
+            v_numar_evidenta,
+            'Proba noua adaugata in sistem - ' || :NEW.tip_proba
+        );
+
+        -- afisare mesaj!!
+        DBMS_OUTPUT.PUT_LINE('');
+        DBMS_OUTPUT.PUT_LINE('-------------------------------------------');
+        DBMS_OUTPUT.PUT_LINE('     TRIGGER LINIE: INSERT NOUA PROBA             ');
+        DBMS_OUTPUT.PUT_LINE('  -->> ID Proba: ' || :NEW.id_proba);
+        DBMS_OUTPUT.PUT_LINE('  -->> Numar evidenta: ' || :NEW.numar_evidenta);
+        DBMS_OUTPUT.PUT_LINE('  -->> Tip proba: ' || :NEW.tip_proba);
+        DBMS_OUTPUT.PUT_LINE('  -->> Utilizator: ' || v_utilizator);
+        DBMS_OUTPUT.PUT_LINE('  *** Audit inregistrat pentru PROBA NOUA ***');
+        DBMS_OUTPUT.PUT_LINE('');
+
+    -- cazul 1 --->> UPDATE pt modificarea unei probe existente
+    ELSIF UPDATING THEN
+        v_tip_operatie := 'UPDATE';
+        -- trebuie sa verific fiecare camp important si sa inregistrez modificarile
+        -- statusul pentru analiza modificat
+        IF :OLD.status_analiza != :NEW.status_analiza OR
+           (:OLD.status_analiza IS NULL AND :NEW.status_analiza IS NOT NULL) OR
+           (:OLD.status_analiza IS NOT NULL AND :NEW.status_analiza IS NULL) THEN
+
+            INSERT INTO audit_probe_detaliat (
+                id_proba, tip_operatie, camp_modificat,
+                valoare_veche, valoare_noua,
+                utilizator, numar_evidenta_proba, detalii
+            ) VALUES (
+                :NEW.id_proba,
+                v_tip_operatie,
+                'status_analiza',
+                :OLD.status_analiza,
+                :NEW.status_analiza,
+                v_utilizator,
+                v_numar_evidenta,
+                'Status analiza modificat'
+            );
+        END IF;
+
+        -- rezultat analiza modificat
+        IF :OLD.rezultat_analiza != :NEW.rezultat_analiza OR
+           (:OLD.rezultat_analiza IS NULL AND :NEW.rezultat_analiza IS NOT NULL) OR
+           (:OLD.rezultat_analiza IS NOT NULL AND :NEW.rezultat_analiza IS NULL) THEN
+
+            INSERT INTO audit_probe_detaliat (
+                id_proba, tip_operatie, camp_modificat,
+                valoare_veche, valoare_noua,
+                utilizator, numar_evidenta_proba, detalii
+            ) VALUES (
+                :NEW.id_proba,
+                v_tip_operatie,
+                'rezultat_analiza',
+                :OLD.rezultat_analiza,
+                :NEW.rezultat_analiza,
+                v_utilizator,
+                v_numar_evidenta,
+                'Rezultat analiza actualizat'
+            );
+        END IF;
+
+        -- conditie proba modificata
+        IF :OLD.conditie_proba != :NEW.conditie_proba OR
+           (:OLD.conditie_proba IS NULL AND :NEW.conditie_proba IS NOT NULL) OR
+           (:OLD.conditie_proba IS NOT NULL AND :NEW.conditie_proba IS NULL) THEN
+
+            INSERT INTO audit_probe_detaliat (
+                id_proba, tip_operatie, camp_modificat,
+                valoare_veche, valoare_noua,
+                utilizator, numar_evidenta_proba, detalii
+            ) VALUES (
+                :NEW.id_proba,
+                v_tip_operatie,
+                'conditie_proba',
+                :OLD.conditie_proba,
+                :NEW.conditie_proba,
+                v_utilizator,
+                v_numar_evidenta,
+                'Conditie proba modificata (posibila deteriorare!)'
+            );
+        END IF;
+
+        -- proba trimisa in judecata
+        IF NVL(:OLD.proba_judecata, 'N') != NVL(:NEW.proba_judecata, 'N') THEN
+            INSERT INTO audit_probe_detaliat (
+                id_proba, tip_operatie, camp_modificat,
+                valoare_veche, valoare_noua,
+                utilizator, numar_evidenta_proba, detalii
+            ) VALUES (
+                :NEW.id_proba,
+                v_tip_operatie,
+                'proba_judecata',
+                :OLD.proba_judecata,
+                :NEW.proba_judecata,
+                v_utilizator,
+                v_numar_evidenta,
+                CASE
+                    WHEN :NEW.proba_judecata = 'D' THEN 'Proba TRIMISA in judecata'
+                    ELSE 'Status judecata modificat'
+                END
+            );
+        END IF;
+
+        DBMS_OUTPUT.PUT_LINE('');
+        DBMS_OUTPUT.PUT_LINE('-------------------------------------------');
+        DBMS_OUTPUT.PUT_LINE('     TRIGGER LINIE: UPDATE PROBA             ');
+        DBMS_OUTPUT.PUT_LINE('  --->> ID Proba: ' || :NEW.id_proba);
+        DBMS_OUTPUT.PUT_LINE('  --->> Numar evidenta: ' || :NEW.numar_evidenta);
+        DBMS_OUTPUT.PUT_LINE('  --->> Utilizator: ' || v_utilizator);
+        DBMS_OUTPUT.PUT_LINE('  ***** Modificari inregistrate in audit *******');
+        DBMS_OUTPUT.PUT_LINE('');
+
+    -- cazul 3 --->> DELETE - sterg o proba
+    ELSIF DELETING THEN
+        v_tip_operatie := 'DELETE';
+
+        INSERT INTO audit_probe_detaliat (
+            id_proba, tip_operatie, camp_modificat,
+            valoare_veche, valoare_noua,
+            utilizator, numar_evidenta_proba, detalii
+        ) VALUES (
+            :OLD.id_proba,
+            v_tip_operatie,
+            'PROBA_STEARSA',
+            'Nr: ' || :OLD.numar_evidenta || ', Tip: ' || :OLD.tip_proba,
+            NULL,
+            v_utilizator,
+            v_numar_evidenta,
+            'ATENTIE: Proba stearsa din sistem! Tip: ' || :OLD.tip_proba
+        );
+
+        DBMS_OUTPUT.PUT_LINE('');
+        DBMS_OUTPUT.PUT_LINE('-------------------------------------------');
+        DBMS_OUTPUT.PUT_LINE('     TRIGGER LINIE: UPDATE PROBA             ');
+        DBMS_OUTPUT.PUT_LINE('  --->> ID Proba: ' || :OLD.id_proba);
+        DBMS_OUTPUT.PUT_LINE('  --->> Numar evidenta: ' || :OLD.numar_evidenta);
+        DBMS_OUTPUT.PUT_LINE('  --->> Tip proba: ' || :OLD.tip_proba);
+        DBMS_OUTPUT.PUT_LINE('  --->> Utilizator: ' || v_utilizator);
+        DBMS_OUTPUT.PUT_LINE('  ***  ATENTIE: Proba STEARSA din sistem! ****');
+        DBMS_OUTPUT.PUT_LINE('');
+    END IF;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        -- nu blochez operatia principala
+        DBMS_OUTPUT.PUT_LINE('EROARE in trigger audit probe: ' || SQLERRM);
+END trigger_audit_probe_linie;
+
+-- verific daca trigger ul a fost creat cu succes
+SELECT trigger_name, trigger_type, triggering_event, table_name, status
+FROM user_triggers
+WHERE trigger_name = 'TRIGGER_AUDIT_PROBE_LINIE';
+
+-- teste pentru trigger
+
+-- test 1 -> INSERT pt adaugarea de probe noi, se executa pentru fiecare proba
+INSERT INTO PROBA (
+    id_caz, numar_evidenta, tip_proba, categorie_proba,
+    data_colectare, conditie_proba, status_analiza, proba_judecata
+) VALUES (
+    1, 'PROBE-TEST-001', 'fizica', 'arma',
+    SYSDATE, 'intacta', 'in așteptare', 'N'
+);
+
+INSERT INTO PROBA (
+    id_caz, numar_evidenta, tip_proba, categorie_proba,
+    data_colectare, conditie_proba, status_analiza, proba_judecata
+) VALUES (
+    1, 'PROBE-TEST-002', 'biologica', 'ADN',
+    SYSDATE, 'perfect conservata', 'in așteptare', 'N'
+);
+
+INSERT INTO PROBA (
+    id_caz, numar_evidenta, tip_proba, categorie_proba,
+    data_colectare, conditie_proba, status_analiza, proba_judecata
+) VALUES (
+    2, 'PROBE-TEST-003', 'balistica', 'test',
+    SYSDATE, 'intacta', 'nepreluata', 'N'
+);
+
+-- verific auditul
+SELECT id_audit_proba, id_proba, tip_operatie, camp_modificat,
+       numar_evidenta_proba, detalii,
+       TO_CHAR(data_modificare, 'HH24:MI:SS') AS ora
+FROM audit_probe_detaliat
+WHERE tip_operatie = 'INSERT'
+ORDER BY id_audit_proba DESC
+FETCH FIRST 3 ROWS ONLY;
+
+-- test 2 -->> UPDATE pt modificarea statusului analizei probelor, se executa pt fiecare
+UPDATE PROBA
+SET status_analiza = 'analizata',
+    rezultat_analiza = 'ADN confirmat suspect principal'
+WHERE numar_evidenta = 'PROBE-TEST-001';
+
+UPDATE PROBA
+SET status_analiza = 'analizata',
+    rezultat_analiza = 'Amprenta pozitiva - identificare completa'
+WHERE numar_evidenta = 'PROBE-TEST-002';
+
+-- verificare audit pt modificari
+SELECT id_audit_proba, id_proba, camp_modificat,
+       valoare_veche, valoare_noua, detalii
+FROM audit_probe_detaliat
+WHERE tip_operatie = 'UPDATE'
+  AND numar_evidenta_proba LIKE 'PROBE-TEST%'
+ORDER BY id_audit_proba DESC;
+
+-- test 3 ->> UPDATE MULTIPLU - pt trimitere in judecata, se executa pentru fiecare proba trimisa in judecata
+UPDATE PROBA
+SET proba_judecata = 'D'
+WHERE numar_evidenta LIKE 'PROBE-TEST%'
+  AND status_analiza = 'analizata';
+
+-- verificare audit
+SELECT numar_evidenta, tip_proba, status_analiza, proba_judecata
+FROM PROBA
+WHERE numar_evidenta LIKE 'PROBE-TEST%'
+ORDER BY numar_evidenta;
+
+SELECT id_audit_proba, numar_evidenta_proba, camp_modificat,
+       valoare_veche AS inainte, valoare_noua AS dupa, detalii
+FROM audit_probe_detaliat
+WHERE camp_modificat = 'proba_judecata'
+  AND numar_evidenta_proba LIKE 'PROBE-TEST%'
+ORDER BY id_audit_proba DESC;
+
+-- test 4 -->> UPDATE pt deteriorare proba
+UPDATE PROBA
+SET conditie_proba = 'deteriorata partial'
+WHERE numar_evidenta = 'PROBE-TEST-003';
+
+-- verificare audit pentru deterioare proba
+SELECT id_audit_proba, numar_evidenta_proba, camp_modificat,
+       valoare_veche, valoare_noua, detalii,
+       TO_CHAR(data_modificare, 'DD-MON-YYYY HH24:MI:SS') AS cand
+FROM audit_probe_detaliat
+WHERE camp_modificat = 'conditie_proba'
+  AND numar_evidenta_proba = 'PROBE-TEST-003'
+ORDER BY id_audit_proba DESC;
+
+-- test 5 -->> DELETE - sterg niste probe, se executa pt fiecare proba stearsa
+DELETE FROM PROBA
+WHERE numar_evidenta IN ('PROBE-TEST-001', 'PROBE-TEST-002');
+
+-- verificare audit
+SELECT id_audit_proba, id_proba, numar_evidenta_proba,
+       valoare_veche, detalii,
+       TO_CHAR(data_modificare, 'DD-MON-YYYY HH24:MI:SS') AS data_stergere
+FROM audit_probe_detaliat
+WHERE tip_operatie = 'DELETE'
+  AND numar_evidenta_proba LIKE 'PROBE-TEST%'
+ORDER BY id_audit_proba DESC;
+
+-- curat final datele adaugate pentru testarea cerintei
+DELETE FROM PROBA WHERE numar_evidenta LIKE 'PROBE-TEST%';
+COMMIT;
+
+-- raport final
+SELECT
+    id_audit_proba,
+    tip_operatie,
+    numar_evidenta_proba,
+    camp_modificat,
+    valoare_veche,
+    valoare_noua,
+    TO_CHAR(data_modificare, 'DD-MON HH24:MI:SS') AS data_modificare,
+    utilizator,
+    detalii
+FROM audit_probe_detaliat
+ORDER BY data_modificare DESC
+FETCH FIRST 20 ROWS ONLY;
+
+-- statistici
+SELECT
+    tip_operatie,
+    camp_modificat,
+    COUNT(*) AS numar_modificari
+FROM audit_probe_detaliat
+GROUP BY tip_operatie, camp_modificat
+ORDER BY tip_operatie, numar_modificari DESC;
+
+
+-- CERINTA 12 PROIECT
+-- trigger de tip LDD
+-- OPERATII LDD --->> CREATE, ALTER, DROP, TRUNCATE
+
+-- IMPLEMENTARE!!!
+-- creez o tabela speciala pt audit
+CREATE TABLE audit_operatii_ldd (
+    id_audit NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    utilizator VARCHAR2(100),
+    eveniment VARCHAR2(50),
+    nume_obiect VARCHAR2(200),
+    tip_obiect VARCHAR2(50),
+    data TIMESTAMP,
+    status VARCHAR2(20),
+    mesaj VARCHAR2(1000)
+);
+
+-- creez niste tabele neprotejate pe test
+CREATE TABLE test_tabel_1 (
+    id NUMBER PRIMARY KEY,
+    nume VARCHAR2(100),
+    data_creare DATE DEFAULT SYSDATE
+);
+
+CREATE TABLE test_tabel_2 (
+    id NUMBER PRIMARY KEY,
+    descriere VARCHAR2(200),
+    status VARCHAR2(20) DEFAULT 'activ'
+);
+
+-- populare cu cateva date de test
+INSERT INTO test_tabel_1 VALUES (1, 'Test 1', SYSDATE);
+INSERT INTO test_tabel_1 VALUES (2, 'Test 2', SYSDATE);
+INSERT INTO test_tabel_2 VALUES (1, 'Descriere 1', 'activ');
+INSERT INTO test_tabel_2 VALUES (2, 'Descriere 2', 'activ');
+COMMIT;
+
+-- creez o procedura pt audit
+-- +++ folosesc PRAGMA AUTONOMOUS_TRANSACTION pt tranzatia independenta
+CREATE OR REPLACE PROCEDURE proc_audit_operatii_ldd (
+    p_eveniment VARCHAR2,
+    p_obiect VARCHAR2,
+    p_tip_obiect VARCHAR2,
+    p_status VARCHAR2,
+    p_mesaj VARCHAR2
+) AS
+    PRAGMA AUTONOMOUS_TRANSACTION;
+BEGIN
+    INSERT INTO audit_operatii_ldd (
+        utilizator,
+        eveniment,
+        nume_obiect,
+        tip_obiect,
+        data,
+        status,
+        mesaj
+    ) VALUES (
+        USER,
+        p_eveniment,
+        p_obiect,
+        p_tip_obiect,
+        SYSTIMESTAMP,
+        p_status,
+        p_mesaj
+    );
+    COMMIT;  -- commit independent
+
+    -- afisare mesaje
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE('--------------------------------');
+    DBMS_OUTPUT.PUT_LINE(' ****  AUDIT OPERATII LDD INREGISTRAT  *****');
+    DBMS_OUTPUT.PUT_LINE('  --->> Eveniment: ' || p_eveniment);
+    DBMS_OUTPUT.PUT_LINE('  --->> Obiect: ' || p_obiect);
+    DBMS_OUTPUT.PUT_LINE('  --->> Status: ' || p_status);
+    DBMS_OUTPUT.PUT_LINE('  --->> Mesaj: ' || p_mesaj);
+    DBMS_OUTPUT.PUT_LINE('');
+
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        DBMS_OUTPUT.PUT_LINE('EROARE la audit: ' || SQLERRM);
+        RAISE;
+END proc_audit_operatii_ldd;
+
+-- creez un trigger LDD cu protectie pe tabelele critice
+CREATE OR REPLACE TRIGGER trigger_ldd_protectie
+    AFTER CREATE OR ALTER OR DROP OR TRUNCATE ON SCHEMA
+DECLARE
+    v_eveniment VARCHAR2(50);
+    v_obiect VARCHAR2(200);
+    v_tip_obiect VARCHAR2(50);
+    v_status VARCHAR2(20);
+    v_mesaj VARCHAR2(1000);
+    v_blocat BOOLEAN := FALSE;
+
+    -- fac o lista cu tabelele critice protejate care nu pot fi modificate cu DROP TRUNCATE
+    TYPE t_tabele_critice IS TABLE OF VARCHAR2(100);
+    v_tabele_critice t_tabele_critice := t_tabele_critice(
+        'SECTIE_POLITIE',
+        'SPECIALIZARE',
+        'DEPARTAMENT',
+        'OFITER',
+        'CAZ',
+        'PROBA',
+        'SUSPECT',
+        'VICTIMA',
+        'CAZ_SUSPECT',
+        'CAZ_VICTIMA'
+    );
+
+BEGIN
+    -- preluez informatiile
+    v_eveniment := SYS.SYSEVENT;
+    v_obiect := SYS.DICTIONARY_OBJ_NAME;
+    v_tip_obiect := SYS.DICTIONARY_OBJ_TYPE;
+
+    -- verific operatiile periculoase pe tabelele critice
+    IF (v_eveniment = 'DROP' OR v_eveniment = 'TRUNCATE') THEN
+        -- verific daca obiectul este in lista tabelelor critice
+        FOR i IN 1..v_tabele_critice.COUNT LOOP
+            IF UPPER(v_obiect) = UPPER(v_tabele_critice(i)) THEN
+                v_blocat := TRUE;
+                v_status := 'BLOCAT';
+                v_mesaj := 'SECURITATE: Operatia ' || v_eveniment ||
+                          ' pe tabelul CRITIC "' || v_obiect ||
+                          '" este INTERZISA!';
+                EXIT;  -- opresc cautarea
+            END IF;
+        END LOOP;
+
+        -- daca nu e blocat, atunci este permis si se pot efectua operatiile
+        IF NOT v_blocat THEN
+            v_status := 'PERMIS';
+            v_mesaj := 'Operatie ' || v_eveniment || ' permisa pe obiect necritic: ' || v_obiect;
+        END IF;
+
+    ELSE
+        -- CREATE SI ALTER sunt permise
+        v_status := 'PERMIS';
+        v_mesaj := 'Operatie DDL standard: ' || v_eveniment || ' ' ||
+                   v_tip_obiect || ' ' || v_obiect;
+    END IF;
+
+    -- inregistrez in audit mereu!!!
+    proc_audit_operatii_ldd(
+        p_eveniment => v_eveniment,
+        p_obiect => v_obiect,
+        p_tip_obiect => v_tip_obiect,
+        p_status => v_status,
+        p_mesaj => v_mesaj
+    );
+
+    -- blochez operatia daca e marcata ca blocata
+    IF v_blocat THEN
+        RAISE_APPLICATION_ERROR(-20999, v_mesaj);
+    END IF;
+
+END trigger_ldd_protectie;
+
+-- verific daca triggerul a fost creat corect
+SELECT object_name, object_type, status
+FROM user_objects
+WHERE object_name IN ('TRIGGER_LDD_PROTECTIE', 'PROC_AUDIT_OPERATII_LDD', 'AUDIT_OPERATII_LDD')
+ORDER BY object_type, object_name;
+
+-- teste!!!!
+-- test 1 -->> create table -- operatie permisa si audiata
+CREATE TABLE test_creare_politie (
+    id NUMBER PRIMARY KEY,
+    data_creare TIMESTAMP DEFAULT SYSTIMESTAMP,
+    descriere VARCHAR2(100)
+);
+
+-- verific audit
+SELECT eveniment, nume_obiect, status, mesaj
+FROM audit_operatii_ldd
+WHERE nume_obiect = 'TEST_CREARE_POLITIE';
+
+-- test 2 --->> alter table pe tabel permis
+ALTER TABLE test_tabel_1 ADD (
+    data_modificare TIMESTAMP,
+    status VARCHAR2(20) DEFAULT 'activ'
+);
+
+-- test 3 -->> creare index operatie permisa
+CREATE INDEX idx_test_politie ON test_tabel_1(nume);
+
+-- verific audit
+SELECT eveniment, nume_obiect, tip_obiect, status
+FROM audit_operatii_ldd
+WHERE nume_obiect = 'IDX_TEST_POLITIE';
+
+-- test 4 -->> truncate pe tabel neprotejat, PERMIS
+TRUNCATE TABLE test_tabel_2;
+
+-- verificare audit
+SELECT eveniment, nume_obiect, status, mesaj
+FROM audit_operatii_ldd
+WHERE nume_obiect = 'TEST_TABEL_2';
+
+-- test 5 -->> drop pe tabel neprotejat, deci permis
+DROP TABLE test_tabel_2;
+
+-- verificare audit
+SELECT eveniment, nume_obiect, status, mesaj
+FROM audit_operatii_ldd
+WHERE nume_obiect = 'TEST_TABEL_2'
+ORDER BY data;
+
+-- test 6 -->> drop pe tabel protejat, caz in care operatia va fi blocata
+BEGIN
+    EXECUTE IMMEDIATE 'DROP TABLE CAZ';
+    DBMS_OUTPUT.PUT_LINE(' !!!! EROARE: Nu ar fi trebuit sa ajunga aici!');
+EXCEPTION
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('!!!! OPERATIE BLOCATA !!!!');
+        DBMS_OUTPUT.PUT_LINE('Mesaj: ' || SQLERRM);
+END;
+
+-- verificare daca operatia blocata a ajuns in audit
+SELECT eveniment, nume_obiect, status, mesaj
+FROM audit_operatii_ldd
+WHERE nume_obiect = 'CAZ'
+ORDER BY data DESC;
+
+-- test 7 --->> truncate pe tabel protejat, caz in care operatia va fi blocata
+BEGIN
+    EXECUTE IMMEDIATE 'TRUNCATE TABLE PROBA';
+    DBMS_OUTPUT.PUT_LINE('!!!! EROARE: Nu ar fi trebuit sa ajunga aici!');
+EXCEPTION
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('!!!! OPERATIE BLOCATA !!!!');
+        DBMS_OUTPUT.PUT_LINE('Mesaj: ' || SQLERRM);
+END;
+
+-- verificare audit
+SELECT eveniment, nume_obiect, status, mesaj
+FROM audit_operatii_ldd
+WHERE nume_obiect = 'PROBA'
+ORDER BY data DESC;
+
+-- test 8 --->> drop pe tabel protejat
+BEGIN
+    EXECUTE IMMEDIATE 'DROP TABLE SUSPECT';
+EXCEPTION
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE(' !!!! BLOCAT SUSPECT: ' || SQLERRM);
+END;
+
+-- test 9 --->> truncate pe tabel protejat ---BLOCAT
+BEGIN
+    EXECUTE IMMEDIATE 'TRUNCATE TABLE DEPARTAMENT';
+EXCEPTION
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE(' !!!! BLOCAT DEPARTAMENT: ' || SQLERRM);
+END;
+
+-- raport final --> toate operatiile
+SELECT
+    id_audit,
+    eveniment,
+    nume_obiect,
+    tip_obiect,
+    utilizator,
+    TO_CHAR(data, 'DD-MON-YYYY HH24:MI:SS') AS data,
+    status,
+    SUBSTR(mesaj, 1, 80) AS mesaj
+FROM audit_operatii_ldd
+ORDER BY data DESC;
+
+
+--  CERINTA 13 PROIECT
+
+-- maybe >>
+-- tipuri de date: info despre departament pentru asignare caz in functie de scor
+--                 analiza detaliata a cazurilor, tot cu scor calculat din probe victime si suspecti
+--                 o colectie de departamente
+-- functii: vreau o functie care calculeaza scorul de potrivire dintre un departament si un caz
+--          functie care gaseste departamentul cel mai optim pentru cazul respectiv
+--          functie care calculeaza progresul unei investigatii
+--          functie care analizeaza investigatia detaliat
+--          functie care obtine toata lista de departamente
+-- proceduri: procedura care asigneaza automat cazul la un departamanet
+--            procedura care face analiza completa a unei investigatii
+--            procedura care compara departamenele si arata toate obtiunile
+--            procedura care determina raportul de performanta per departamente
+
+-- imi definesc tipurile de date
+-- tip de data 1 -> pentru informatii complete legate de departament
+CREATE OR REPLACE TYPE tip_informatii_departament AS OBJECT (
+    id_departament NUMBER,
+    nume_departament VARCHAR2(150),
+    specializare VARCHAR2(100),
+    nr_ofiteri NUMBER,
+    nr_cazuri_active NUMBER,
+    scor_potrivire NUMBER
+);
+
+-- tip de data 2 ->> pt analiza completa de investigatie
+CREATE OR REPLACE TYPE tip_caz_analiza AS OBJECT (
+    id_caz NUMBER,
+    numar_caz VARCHAR2(50),
+    tip_caz VARCHAR2(100),
+    scor_progres NUMBER,
+    nr_probe NUMBER,
+    nr_probe_analizate NUMBER,
+    nr_suspecti NUMBER,
+    nivel_urgenta VARCHAR2(20),
+    recomandari VARCHAR2(1000)
+);
+
+-- tip de data 3 -->> o coletie de departamente
+CREATE OR REPLACE TYPE tip_lista_departament AS TABLE OF tip_informatii_departament;
+
+-- creez pachetul cu specificatiile
+CREATE OR REPLACE PACKAGE package_investigatii AS
+    -- exceptii personalizate
+    ex_departament_supraincarcat EXCEPTION;
+    ex_caz_invalid EXCEPTION;
+
+    -- functiile
+    -- functia 1 -->> calculeaza scorul de potrivire
+    FUNCTION calculeaza_scor_potrivire(
+        p_id_departament IN NUMBER,
+        p_numar_caz IN VARCHAR2
+    ) RETURN NUMBER;
+
+    -- functia 2 -->> gaseste departamentul optim si returneaza informatiile complete
+    -- pt informatiile complete o sa returnez tip_informatii_departament
+    FUNCTION gaseste_departament_optim(
+        p_numar_caz IN VARCHAR2,
+        p_id_sectie IN NUMBER
+    ) RETURN tip_informatii_departament;
+
+    -- functia 3 -->> calculez progresul de investigatie
+    FUNCTION calculeaza_progres_investigatie(
+        p_id_caz IN NUMBER
+    ) RETURN NUMBER;
+
+    -- functia 4 --->> fac o analiza completa a investigatiilor cu informatiile complete
+    -- pentru informatiile complete ale investigatiilor voi folosi tip_caz_analiza
+    FUNCTION analizeaza_investigatie_detaliat(
+        p_id_caz IN NUMBER
+    ) RETURN tip_caz_analiza;
+
+    -- functia 5 --->> trebuie sa obtin lista tuturor departamentelor cu scorurile
+    -- o sa folosesc tip_lista_departament
+    FUNCTION obtine_lista_departamente(
+        p_numar_caz IN VARCHAR2,
+        p_id_sectie IN NUMBER
+    ) RETURN tip_lista_departament;
+
+    -- proceduri!!
+    -- procedura 1 -->> asignarea automata a unui caz
+    PROCEDURE asigneaza_caz_automat(
+        p_id_caz IN NUMBER
+    );
+
+    -- procedura 2 -->> analiza investigatiei
+    PROCEDURE analizeaza_investigatie(
+        p_id_caz IN NUMBER
+    );
+
+    -- procedura 3 -->> compara departamenele si mi arata toate optiunile
+    PROCEDURE compara_departamente(
+        p_numar_caz IN VARCHAR2,
+        p_id_sectie IN NUMBER
+    );
+
+    -- procedura 4 -->> pentru rapoartele de performanta
+    PROCEDURE raport_departamente(
+        p_id_sectie IN NUMBER
+    );
+
+END package_investigatii;
+
+-- corpul pachetului
+CREATE OR REPLACE PACKAGE BODY package_investigatii AS
+
+    -- functia pentru calculul scorului de potrivire
+    FUNCTION calculeaza_scor_potrivire(
+        p_id_departament IN NUMBER,
+        p_numar_caz IN VARCHAR2
+    ) RETURN NUMBER IS
+
+        v_scor NUMBER := 0;
+        v_cod_specializare VARCHAR2(30);
+        v_nr_cazuri_active NUMBER;
+        v_nr_ofiteri NUMBER;
+        v_cod_din_caz VARCHAR2(30);
+
+    BEGIN
+        SELECT sp.cod_specializare,
+               COUNT(DISTINCT o.id_ofiter),
+               COUNT(DISTINCT CASE WHEN c.status_caz IN ('activ', 'in asteptare')
+                     THEN c.id_caz END)
+        INTO v_cod_specializare, v_nr_ofiteri, v_nr_cazuri_active
+        FROM DEPARTAMENT d
+        LEFT JOIN SPECIALIZARE sp ON d.id_specializare = sp.id_specializare
+        LEFT JOIN OFITER o ON d.id_departament = o.id_departament
+        LEFT JOIN CAZ c ON d.id_departament = c.id_departament
+        WHERE d.id_departament = p_id_departament
+        GROUP BY sp.cod_specializare;
+
+        -- extrag codul specializarii din numarul cazului
+        BEGIN
+            v_cod_din_caz := REGEXP_SUBSTR(p_numar_caz, '[^/]+', 1, 2);
+        EXCEPTION
+            WHEN OTHERS THEN
+                v_cod_din_caz := NULL;
+        END;
+
+        -- in functie de codul de specializare
+        IF v_cod_din_caz IS NOT NULL AND v_cod_specializare IS NOT NULL THEN
+            IF UPPER(v_cod_specializare) = UPPER(v_cod_din_caz) THEN
+                v_scor := v_scor + 50;
+            ELSIF UPPER(v_cod_specializare) LIKE UPPER(v_cod_din_caz) || '%' OR
+                  UPPER(v_cod_din_caz) LIKE UPPER(v_cod_specializare) || '%' THEN
+                v_scor := v_scor + 30;
+            ELSE
+                v_scor := v_scor + 5;
+            END IF;
+        ELSE
+            v_scor := v_scor + 5;
+        END IF;
+
+        -- scorul pentru capacitatea departamentului
+        IF v_nr_cazuri_active <= 3 THEN
+            v_scor := v_scor + 30;
+        ELSIF v_nr_cazuri_active <= 6 THEN
+            v_scor := v_scor + 15;
+        END IF;
+
+        -- scorul pentru vechimea ofiterilor din departament
+        v_scor := v_scor + LEAST(20, v_nr_ofiteri * 5);
+
+        RETURN v_scor;
+
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RETURN 0;
+        WHEN OTHERS THEN
+            RETURN 0;
+    END calculeaza_scor_potrivire;
+
+    -- functia ce gaseste departamentul optim pentru un caz
+    FUNCTION gaseste_departament_optim(
+        p_numar_caz IN VARCHAR2,
+        p_id_sectie IN NUMBER
+    ) RETURN tip_informatii_departament IS
+
+        v_id_departament_optim NUMBER;
+        v_scor_maxim NUMBER := 0;
+        v_scor_curent NUMBER;
+        v_rezultat tip_informatii_departament;
+
+        CURSOR c_departamente IS
+            SELECT id_departament
+            FROM DEPARTAMENT
+            WHERE id_sectie = p_id_sectie;
+
+    BEGIN
+        -- gasesc departamentul cu cel mai mare scor
+        FOR rec IN c_departamente LOOP
+            v_scor_curent := calculeaza_scor_potrivire(rec.id_departament, p_numar_caz);
+
+            IF v_scor_curent > v_scor_maxim THEN
+                v_scor_maxim := v_scor_curent;
+                v_id_departament_optim := rec.id_departament;
+            END IF;
+        END LOOP;
+
+        IF v_id_departament_optim IS NULL THEN
+            RAISE ex_departament_supraincarcat;
+        END IF;
+
+        -- construiesc obiectul de tip tip_informatii_departament ce urmeaza sa l returnez
+        SELECT tip_informatii_departament(
+            d.id_departament,
+            d.nume_departament,
+            NVL(sp.nume_specializare, 'N/A'),
+            COUNT(DISTINCT o.id_ofiter),
+            COUNT(DISTINCT CASE WHEN c.status_caz IN ('activ', 'in asteptare')
+                  THEN c.id_caz END),
+            v_scor_maxim
+        )
+        INTO v_rezultat
+        FROM DEPARTAMENT d
+        LEFT JOIN SPECIALIZARE sp ON d.id_specializare = sp.id_specializare
+        LEFT JOIN OFITER o ON d.id_departament = o.id_departament
+        LEFT JOIN CAZ c ON d.id_departament = c.id_departament
+        WHERE d.id_departament = v_id_departament_optim
+        GROUP BY d.id_departament, d.nume_departament, sp.nume_specializare;
+
+        RETURN v_rezultat;
+
+    EXCEPTION
+        WHEN ex_departament_supraincarcat THEN
+            RETURN NULL;
+        WHEN OTHERS THEN
+            RETURN NULL;
+    END gaseste_departament_optim;
+
+    -- functia ce calculeaza progresul unei investigatii
+    FUNCTION calculeaza_progres_investigatie(
+        p_id_caz IN NUMBER
+    ) RETURN NUMBER IS
+
+        v_scor NUMBER := 0;
+        v_nr_probe NUMBER;
+        v_nr_probe_analizate NUMBER;
+        v_nr_suspecti NUMBER;
+        v_status_caz VARCHAR2(30);
+
+    BEGIN
+        SELECT status_caz INTO v_status_caz
+        FROM CAZ WHERE id_caz = p_id_caz;
+
+        SELECT COUNT(*),
+               COUNT(CASE WHEN status_analiza IN ('analizata', 'rezultate disponibile')
+                     THEN 1 END)
+        INTO v_nr_probe, v_nr_probe_analizate
+        FROM PROBA WHERE id_caz = p_id_caz;
+
+        SELECT COUNT(*) INTO v_nr_suspecti
+        FROM CAZ_SUSPECT WHERE id_caz = p_id_caz;
+
+        -- calculez scorul investigatiei
+        IF v_nr_probe > 0 THEN
+            v_scor := v_scor + (v_nr_probe_analizate / v_nr_probe) * 40;
+        END IF;
+
+        IF v_nr_suspecti > 0 THEN
+            v_scor := v_scor + LEAST(35, v_nr_suspecti * 10);
+        END IF;
+
+        CASE v_status_caz
+            WHEN 'rezolvat' THEN v_scor := 100;
+            WHEN 'trimis in judecata' THEN v_scor := GREATEST(v_scor, 85);
+            WHEN 'activ' THEN v_scor := v_scor + 15;
+            ELSE v_scor := v_scor + 5;
+        END CASE;
+
+        RETURN LEAST(100, ROUND(v_scor));
+
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RAISE ex_caz_invalid;
+        WHEN OTHERS THEN
+            RETURN 0;
+    END calculeaza_progres_investigatie;
+
+    -- functia de analizeaza mai detaliat investigatia
+    FUNCTION analizeaza_investigatie_detaliat(
+        p_id_caz IN NUMBER
+    ) RETURN tip_caz_analiza IS
+
+        v_rezultat tip_caz_analiza;
+        v_numar_caz VARCHAR2(50);
+        v_tip_caz VARCHAR2(100);
+        v_scor_progres NUMBER;
+        v_nr_probe NUMBER;
+        v_nr_probe_analizate NUMBER;
+        v_nr_suspecti NUMBER;
+        v_nivel_urgenta VARCHAR2(20);
+        v_recomandari VARCHAR2(1000) := '';
+
+    BEGIN
+        -- preluez datele despre caz
+        SELECT numar_caz, tip_caz
+        INTO v_numar_caz, v_tip_caz
+        FROM CAZ WHERE id_caz = p_id_caz;
+
+        -- calculez progresul
+        v_scor_progres := calculeaza_progres_investigatie(p_id_caz);
+
+        -- statistici
+        SELECT COUNT(*) INTO v_nr_probe FROM PROBA WHERE id_caz = p_id_caz;
+        SELECT COUNT(*) INTO v_nr_probe_analizate
+        FROM PROBA WHERE id_caz = p_id_caz
+          AND status_analiza IN ('analizata', 'rezultate disponibile');
+        SELECT COUNT(*) INTO v_nr_suspecti FROM CAZ_SUSPECT WHERE id_caz = p_id_caz;
+
+        -- nivelul de urgenta
+        IF v_scor_progres >= 70 THEN
+            v_nivel_urgenta := 'SCAZUT';
+        ELSIF v_scor_progres >= 40 THEN
+            v_nivel_urgenta := 'MEDIU';
+        ELSE
+            v_nivel_urgenta := 'RIDICAT';
+        END IF;
+
+        -- posibile recomandari
+        IF v_nr_probe = 0 THEN
+            v_recomandari := 'URGENT: Colectare probe! ';
+        ELSIF v_nr_probe_analizate < v_nr_probe THEN
+            v_recomandari := 'Analizare probe ramase. ';
+        END IF;
+
+        IF v_nr_suspecti = 0 THEN
+            v_recomandari := v_recomandari || 'PRIORITATE: Identificare suspecti!';
+        END IF;
+
+        IF v_scor_progres >= 80 THEN
+            v_recomandari := 'Caz aproape finalizat - pregatire dosar judecata';
+        END IF;
+
+        -- construiesc obiectul de tip tip_caz_analiza pt a l returna
+        v_rezultat := tip_caz_analiza(
+            p_id_caz,
+            v_numar_caz,
+            v_tip_caz,
+            v_scor_progres,
+            v_nr_probe,
+            v_nr_probe_analizate,
+            v_nr_suspecti,
+            v_nivel_urgenta,
+            v_recomandari
+        );
+
+        RETURN v_rezultat;
+
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RAISE ex_caz_invalid;
+        WHEN OTHERS THEN
+            RETURN NULL;
+    END analizeaza_investigatie_detaliat;
+
+    -- functia ce obtine lista de departamente impreuna cu scorurile
+    FUNCTION obtine_lista_departamente(
+        p_numar_caz IN VARCHAR2,
+        p_id_sectie IN NUMBER
+    ) RETURN tip_lista_departament IS
+
+        v_lista tip_lista_departament;
+        v_scor NUMBER;
+
+    BEGIN
+        -- populez colectia cu toate departamentele
+        SELECT tip_informatii_departament(
+            d.id_departament,
+            d.nume_departament,
+            NVL(sp.nume_specializare, 'N/A'),
+            COUNT(DISTINCT o.id_ofiter),
+            COUNT(DISTINCT CASE WHEN c.status_caz IN ('activ', 'in asteptare')
+                  THEN c.id_caz END),
+            0
+        )
+        BULK COLLECT INTO v_lista
+        FROM DEPARTAMENT d
+        LEFT JOIN SPECIALIZARE sp ON d.id_specializare = sp.id_specializare
+        LEFT JOIN OFITER o ON d.id_departament = o.id_departament
+        LEFT JOIN CAZ c ON d.id_departament = c.id_departament
+        WHERE d.id_sectie = p_id_sectie
+        GROUP BY d.id_departament, d.nume_departament, sp.nume_specializare
+        ORDER BY d.nume_departament;
+
+        -- calculez scorul pentru fiecare departament
+        IF v_lista IS NOT NULL AND v_lista.COUNT > 0 THEN
+            FOR i IN v_lista.FIRST .. v_lista.LAST LOOP
+                v_scor := calculeaza_scor_potrivire(
+                    v_lista(i).id_departament,
+                    p_numar_caz
+                );
+                v_lista(i).scor_potrivire := v_scor;
+            END LOOP;
+        END IF;
+
+        RETURN v_lista;
+
+    EXCEPTION
+        WHEN OTHERS THEN
+            RETURN NULL;
+    END obtine_lista_departamente;
+
+    -- procedura pentru asignarea automata a unui caz
+    PROCEDURE asigneaza_caz_automat(
+        p_id_caz IN NUMBER
+    ) IS
+        v_numar_caz VARCHAR2(50);
+        v_id_sectie NUMBER;
+        v_dept_optim tip_informatii_departament;
+
+    BEGIN
+        DBMS_OUTPUT.PUT_LINE('');
+        DBMS_OUTPUT.PUT_LINE('---------------------------------------------');
+        DBMS_OUTPUT.PUT_LINE(' *****    ASIGNARE AUTOMATA CAZ   *****');
+        DBMS_OUTPUT.PUT_LINE('');
+
+        -- preluez informatiile despre caz
+        SELECT c.numar_caz, d.id_sectie
+        INTO v_numar_caz, v_id_sectie
+        FROM CAZ c
+        INNER JOIN DEPARTAMENT d ON c.id_departament = d.id_departament
+        WHERE c.id_caz = p_id_caz;
+
+        DBMS_OUTPUT.PUT_LINE(' --->> Caz: ' || v_numar_caz);
+        DBMS_OUTPUT.PUT_LINE(' --->> Secție: ' || v_id_sectie);
+        DBMS_OUTPUT.PUT_LINE('');
+
+        -- apelez functia ce returneaza tipul complet
+        v_dept_optim := gaseste_departament_optim(v_numar_caz, v_id_sectie);
+
+        IF v_dept_optim IS NULL THEN
+            DBMS_OUTPUT.PUT_LINE(' !!! Nu exista departament disponibil !!!');
+            RAISE ex_departament_supraincarcat;
+        END IF;
+
+        -- afisez atributele obiectului
+        DBMS_OUTPUT.PUT_LINE('  *** DEPARTAMENT OPTIM GASIT:');
+        DBMS_OUTPUT.PUT_LINE('  -->> Nume: ' || v_dept_optim.nume_departament);
+        DBMS_OUTPUT.PUT_LINE('  -->> Specializare: ' || v_dept_optim.specializare);
+        DBMS_OUTPUT.PUT_LINE('  -->> Ofiteri: ' || v_dept_optim.nr_ofiteri);
+        DBMS_OUTPUT.PUT_LINE('  -->> Cazuri active: ' || v_dept_optim.nr_cazuri_active);
+        DBMS_OUTPUT.PUT_LINE('  -->> SCOR POTRIVIRE: ' || v_dept_optim.scor_potrivire || '/100');
+        DBMS_OUTPUT.PUT_LINE('');
+
+        -- update caz
+        UPDATE CAZ
+        SET id_departament = v_dept_optim.id_departament
+        WHERE id_caz = p_id_caz;
+
+        COMMIT;
+
+        DBMS_OUTPUT.PUT_LINE(' ** Caz asignat cu succes! **');
+        DBMS_OUTPUT.PUT_LINE('');
+
+    EXCEPTION
+        WHEN ex_caz_invalid THEN
+            DBMS_OUTPUT.PUT_LINE(' !!! Caz invalid !!!');
+        WHEN ex_departament_supraincarcat THEN
+            DBMS_OUTPUT.PUT_LINE(' !!! Toate departamentele sunt supraincarcate !!!');
+        WHEN OTHERS THEN
+            ROLLBACK;
+            DBMS_OUTPUT.PUT_LINE(' !!! EROARE: ' || SQLERRM);
+            RAISE;
+    END asigneaza_caz_automat;
+
+    -- procedura pentru analiza investigatiei
+    PROCEDURE analizeaza_investigatie(
+        p_id_caz IN NUMBER
+    ) IS
+        v_analiza tip_caz_analiza;
+
+    BEGIN
+        DBMS_OUTPUT.PUT_LINE('');
+        DBMS_OUTPUT.PUT_LINE('---------------------------------------------');
+        DBMS_OUTPUT.PUT_LINE(' *****      ANALIZA INVESTIGATIE     *****');
+        DBMS_OUTPUT.PUT_LINE('');
+
+        -- apelez functia care mi returneaza tipul complet
+        v_analiza := analizeaza_investigatie_detaliat(p_id_caz);
+
+        IF v_analiza IS NULL THEN
+            DBMS_OUTPUT.PUT_LINE(' !!!! Cazul nu poate fi analizat !!!!');
+            RETURN;
+        END IF;
+
+        -- afisez atributele obiectului
+        DBMS_OUTPUT.PUT_LINE('  --->>> CAZ: ' || v_analiza.numar_caz);
+        DBMS_OUTPUT.PUT_LINE('  --->>> Tip: ' || v_analiza.tip_caz);
+        DBMS_OUTPUT.PUT_LINE('  --->>> STATISTICI:');
+        DBMS_OUTPUT.PUT_LINE('      --->> Probe: ' || v_analiza.nr_probe_analizate || '/' ||
+                            v_analiza.nr_probe || ' analizate');
+        DBMS_OUTPUT.PUT_LINE('      --->> Suspecti: ' || v_analiza.nr_suspecti);
+        DBMS_OUTPUT.PUT_LINE('  --->>> EVALUARE:');
+        DBMS_OUTPUT.PUT_LINE('      --->> Scor progres: ' || v_analiza.scor_progres || '/100');
+        DBMS_OUTPUT.PUT_LINE('      --->> Nivel urgenta: ' || v_analiza.nivel_urgenta);
+
+        IF LENGTH(v_analiza.recomandari) > 0 THEN
+            DBMS_OUTPUT.PUT_LINE('');
+            DBMS_OUTPUT.PUT_LINE('  --->>>  RECOMANDARI: ' || v_analiza.recomandari);
+        END IF;
+
+        DBMS_OUTPUT.PUT_LINE('');
+
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            DBMS_OUTPUT.PUT_LINE(' !!! Cazul nu exista !!!');
+        WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE(' !!! EROARE: ' || SQLERRM);
+    END analizeaza_investigatie;
+
+    -- procedura pentru comparatia dintre departamente
+    PROCEDURE compara_departamente(
+        p_numar_caz IN VARCHAR2,
+        p_id_sectie IN NUMBER
+    ) IS
+        v_lista tip_lista_departament;
+        v_nume_sectie VARCHAR2(100);
+
+    BEGIN
+        DBMS_OUTPUT.PUT_LINE('');
+        DBMS_OUTPUT.PUT_LINE('------------------------------------------');
+        DBMS_OUTPUT.PUT_LINE(' ***** COMPARAȚIE DEPARTAMENTE *****');
+
+        SELECT nume_sectie INTO v_nume_sectie
+        FROM SECTIE_POLITIE WHERE id_sectie = p_id_sectie;
+
+        DBMS_OUTPUT.PUT_LINE('  --->> Secție: ' || v_nume_sectie);
+        DBMS_OUTPUT.PUT_LINE('  --->> Caz: ' || p_numar_caz);
+        DBMS_OUTPUT.PUT_LINE('');
+        DBMS_OUTPUT.PUT_LINE('------------------------------------------');
+        DBMS_OUTPUT.PUT_LINE('');
+
+        -- apelez functia care mi returneaza colectia de departamente
+        v_lista := obtine_lista_departamente(p_numar_caz, p_id_sectie);
+
+        IF v_lista IS NULL OR v_lista.COUNT = 0 THEN
+            DBMS_OUTPUT.PUT_LINE(' !!!! Nu exista departamente in aceasta sectie !!!!');
+            RETURN;
+        END IF;
+
+        -- parcug colectia si afisez fiecare departament
+        FOR i IN v_lista.FIRST .. v_lista.LAST LOOP
+            DBMS_OUTPUT.PUT_LINE(' -> DEPARTAMENT #' || i || ': ' || v_lista(i).nume_departament);
+            DBMS_OUTPUT.PUT_LINE('      -->> Specializare: ' || v_lista(i).specializare);
+            DBMS_OUTPUT.PUT_LINE('      -->> Ofiteri: ' || v_lista(i).nr_ofiteri);
+            DBMS_OUTPUT.PUT_LINE('      -->> Cazuri active: ' || v_lista(i).nr_cazuri_active || '/10');
+
+            DBMS_OUTPUT.PUT_LINE(' ->>>> SCOR POTRIVIRE: ' || v_lista(i).scor_potrivire || '/100');
+
+            -- recomandari
+            IF v_lista(i).scor_potrivire >= 70 THEN
+                DBMS_OUTPUT.PUT_LINE('  ->>> EXCELENT - Foarte potrivit pentru acest caz');
+            ELSIF v_lista(i).scor_potrivire >= 50 THEN
+                DBMS_OUTPUT.PUT_LINE('  ->>> ACCEPTABIL - Poate gestiona cazul');
+            ELSE
+                DBMS_OUTPUT.PUT_LINE('  ->>> NEPOTRIVIT - Nu se recomanda');
+            END IF;
+
+            DBMS_OUTPUT.PUT_LINE('');
+        END LOOP;
+
+        DBMS_OUTPUT.PUT_LINE('-----------------------------------------');
+        DBMS_OUTPUT.PUT_LINE('Total departamente analizate: ' || v_lista.COUNT);
+        DBMS_OUTPUT.PUT_LINE('');
+
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            DBMS_OUTPUT.PUT_LINE(' !!! Sectia nu exista !!!!');
+        WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE(' !!! EROARE: ' || SQLERRM);
+    END compara_departamente;
+
+    -- procedura pentru raportul de performanta
+    PROCEDURE raport_departamente(
+        p_id_sectie IN NUMBER
+    ) IS
+        v_nume_sectie VARCHAR2(100);
+
+        CURSOR c_departamente IS
+            SELECT
+                d.nume_departament,
+                sp.nume_specializare,
+                COUNT(DISTINCT o.id_ofiter) AS nr_ofiteri,
+                COUNT(DISTINCT CASE WHEN c.status_caz = 'activ' THEN c.id_caz END) AS cazuri_active,
+                COUNT(DISTINCT CASE WHEN c.status_caz = 'rezolvat'
+                      AND c.data_inchidere_caz >= ADD_MONTHS(SYSDATE, -1) THEN c.id_caz END) AS cazuri_rezolvate
+            FROM DEPARTAMENT d
+            LEFT JOIN SPECIALIZARE sp ON d.id_specializare = sp.id_specializare
+            LEFT JOIN OFITER o ON d.id_departament = o.id_departament
+            LEFT JOIN CAZ c ON d.id_departament = c.id_departament
+            WHERE d.id_sectie = p_id_sectie
+            GROUP BY d.nume_departament, sp.nume_specializare
+            ORDER BY d.nume_departament;
+
+    BEGIN
+        DBMS_OUTPUT.PUT_LINE('');
+        DBMS_OUTPUT.PUT_LINE('----------------------------------------------');
+        DBMS_OUTPUT.PUT_LINE(' *****    RAPORT PERFORMANTA DEPARTAMENTE      *****');
+
+        SELECT nume_sectie INTO v_nume_sectie
+        FROM SECTIE_POLITIE WHERE id_sectie = p_id_sectie;
+
+        DBMS_OUTPUT.PUT_LINE('  --->> Secție: ' || v_nume_sectie);
+        DBMS_OUTPUT.PUT_LINE('  --->> Data: ' || TO_CHAR(SYSDATE, 'DD-MON-YYYY'));
+        DBMS_OUTPUT.PUT_LINE('');
+        DBMS_OUTPUT.PUT_LINE('--------------------------------------------------');
+        DBMS_OUTPUT.PUT_LINE('');
+
+        FOR rec IN c_departamente LOOP
+            DBMS_OUTPUT.PUT_LINE(' --->> DEPARTAMENT: ' || rec.nume_departament);
+            DBMS_OUTPUT.PUT_LINE('      --->> Specializare: ' || NVL(rec.nume_specializare, 'N/A'));
+            DBMS_OUTPUT.PUT_LINE('      --->> Ofiteri: ' || rec.nr_ofiteri);
+            DBMS_OUTPUT.PUT_LINE('      --->> Cazuri active: ' || rec.cazuri_active);
+            DBMS_OUTPUT.PUT_LINE('      --->> Rezolvate luna curenta: ' || rec.cazuri_rezolvate);
+
+            IF rec.cazuri_active > 7 THEN
+                DBMS_OUTPUT.PUT_LINE('  * Status: SUPRAINCARCAT');
+            ELSIF rec.cazuri_active < 2 THEN
+                DBMS_OUTPUT.PUT_LINE('  * Status: Poate prelua cazuri');
+            ELSE
+                DBMS_OUTPUT.PUT_LINE('  * Status: Optim');
+            END IF;
+
+            DBMS_OUTPUT.PUT_LINE('');
+        END LOOP;
+
+        DBMS_OUTPUT.PUT_LINE('-------------------------------------------------');
+
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            DBMS_OUTPUT.PUT_LINE(' !!! Sectia nu exista !!!! ');
+        WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE(' !!! EROARE: ' || SQLERRM);
+    END raport_departamente;
+
+END package_investigatii;
+
+-- verific ca pachetul a fost facut ok
+SELECT object_name, object_type, status
+FROM user_objects
+WHERE object_name = 'PACKAGE_INVESTIGATII'
+ORDER BY object_type;
+
+-- TESTE PENTRU VERIFICAREEEEE!!!!!!!!!
+
+-- test pentru functia care gaseste departamentul optim si returneaza tip_informatii_departament
+DECLARE
+    v_dept tip_informatii_departament;
+    v_id_sectie NUMBER;
+    v_numar_caz VARCHAR2(50);
+BEGIN
+    -- iau niste date pentru test
+    SELECT id_sectie INTO v_id_sectie
+    FROM SECTIE_POLITIE WHERE ROWNUM = 1;
+
+    SELECT numar_caz INTO v_numar_caz
+    FROM CAZ WHERE ROWNUM = 1;
+
+    DBMS_OUTPUT.PUT_LINE('  -->> Test pentru:');
+    DBMS_OUTPUT.PUT_LINE('      -->> Sectie ID: ' || v_id_sectie);
+    DBMS_OUTPUT.PUT_LINE('      -->> Numar caz: ' || v_numar_caz);
+    DBMS_OUTPUT.PUT_LINE('');
+
+    -- apelez functia care gaseste departamentul optim
+    v_dept := package_investigatii.gaseste_departament_optim(
+        v_numar_caz,
+        v_id_sectie
+    );
+
+    IF v_dept IS NOT NULL THEN
+        DBMS_OUTPUT.PUT_LINE(' *** DEPARTAMENT GASIT ** ');
+        DBMS_OUTPUT.PUT_LINE('      -->> ID: ' || v_dept.id_departament);
+        DBMS_OUTPUT.PUT_LINE('      -->> Nume: ' || v_dept.nume_departament);
+        DBMS_OUTPUT.PUT_LINE('      -->> Specializare: ' || v_dept.specializare);
+        DBMS_OUTPUT.PUT_LINE('      -->> Ofiteri: ' || v_dept.nr_ofiteri);
+        DBMS_OUTPUT.PUT_LINE('      -->> Cazuri active: ' || v_dept.nr_cazuri_active);
+        DBMS_OUTPUT.PUT_LINE(' *** Scor potrivire: ' || v_dept.scor_potrivire || '/100');
+    ELSE
+        DBMS_OUTPUT.PUT_LINE(' !!! Nu s-a gasit departament disponibil !!!');
+    END IF;
+
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE(' SUCCES >>> Test finalizat cu succes');
+    DBMS_OUTPUT.PUT_LINE('');
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        DBMS_OUTPUT.PUT_LINE(' !!! Nu exista date pentru test !!!');
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE(' !!! EROARE: ' || SQLERRM);
+END;
+
+
+-- testam analiza detaliata a unei investigatii ce returneaza un obiect de tip tip_caz_analiza
+DECLARE
+    v_analiza tip_caz_analiza;
+    v_id_caz NUMBER;
+BEGIN
+    -- iau un caz pentru test
+    SELECT id_caz INTO v_id_caz
+    FROM CAZ WHERE ROWNUM = 1;
+
+    DBMS_OUTPUT.PUT_LINE(' --->> Test pentru caz ID: ' || v_id_caz);
+    DBMS_OUTPUT.PUT_LINE('');
+
+    -- apelez functia de analiza a unei investigatii
+    v_analiza := package_investigatii.analizeaza_investigatie_detaliat(v_id_caz);
+
+    IF v_analiza IS NOT NULL THEN
+        DBMS_OUTPUT.PUT_LINE(' ***  ANALIZA COMPLETA  ***');
+        DBMS_OUTPUT.PUT_LINE('      -->> ID Caz: ' || v_analiza.id_caz);
+        DBMS_OUTPUT.PUT_LINE('      -->> Numar caz: ' || v_analiza.numar_caz);
+        DBMS_OUTPUT.PUT_LINE('      -->> Tip caz: ' || v_analiza.tip_caz);
+        DBMS_OUTPUT.PUT_LINE('  ** Scor progres: ' || v_analiza.scor_progres || '/100');
+        DBMS_OUTPUT.PUT_LINE('      -->> Probe: ' || v_analiza.nr_probe_analizate || '/' || v_analiza.nr_probe);
+        DBMS_OUTPUT.PUT_LINE('      -->> Suspecti: ' || v_analiza.nr_suspecti);
+        DBMS_OUTPUT.PUT_LINE('      -->> Nivel urgenta: ' || v_analiza.nivel_urgenta);
+
+        IF LENGTH(v_analiza.recomandari) > 0 THEN
+            DBMS_OUTPUT.PUT_LINE('  -->> Recomandari: ' || v_analiza.recomandari);
+        END IF;
+    ELSE
+        DBMS_OUTPUT.PUT_LINE(' !!! Nu s-a putut analiza cazul !!!');
+    END IF;
+
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE(' SUCCES >>> Test finalizat cu succes');
+    DBMS_OUTPUT.PUT_LINE('');
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        DBMS_OUTPUT.PUT_LINE(' !!! Nu exista cazuri pentru test !!!');
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE(' !!! EROARE: ' || SQLERRM);
+END;
+
+-- test pentru obtinerea listei tuturor departamentelor ce returneaza colectie
+DECLARE
+    v_lista tip_lista_departament;
+    v_id_sectie NUMBER;
+    v_numar_caz VARCHAR2(50);
+BEGIN
+    SELECT id_sectie INTO v_id_sectie
+    FROM SECTIE_POLITIE WHERE ROWNUM = 1;
+
+    SELECT numar_caz INTO v_numar_caz
+    FROM CAZ WHERE ROWNUM = 1;
+
+    DBMS_OUTPUT.PUT_LINE(' --->> Test pentru:');
+    DBMS_OUTPUT.PUT_LINE('      -->> Sectie: ' || v_id_sectie);
+    DBMS_OUTPUT.PUT_LINE('      -->> Caz: ' || v_numar_caz);
+    DBMS_OUTPUT.PUT_LINE('');
+
+    -- apelez functia ce mi returneaza lista departamentelor
+    v_lista := package_investigatii.obtine_lista_departamente(
+        v_numar_caz,
+        v_id_sectie
+    );
+
+    IF v_lista IS NOT NULL AND v_lista.COUNT > 0 THEN
+        DBMS_OUTPUT.PUT_LINE(' **  LISTA DEPARTAMENTE **');
+        DBMS_OUTPUT.PUT_LINE(' -->> Total departamente: ' || v_lista.COUNT);
+        DBMS_OUTPUT.PUT_LINE('');
+
+        -- parcurg colectia si afisez
+        FOR i IN v_lista.FIRST .. v_lista.LAST LOOP
+            DBMS_OUTPUT.PUT_LINE('  [' || i || '] ' || v_lista(i).nume_departament);
+            DBMS_OUTPUT.PUT_LINE('      -> Scor: ' || v_lista(i).scor_potrivire || '/100');
+        END LOOP;
+    ELSE
+        DBMS_OUTPUT.PUT_LINE(' !!! Nu exista departamente !!!');
+    END IF;
+
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE(' SUCCESS >>> Test finalizat cu succes');
+    DBMS_OUTPUT.PUT_LINE('');
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        DBMS_OUTPUT.PUT_LINE(' !!! Nu exista date pentru test !!!');
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE(' !!! EROARE >> ' || SQLERRM);
+END;
+
+-- testam asignarea automata a unui caz
+DECLARE
+    v_id_caz NUMBER;
+BEGIN
+    -- iau un caz activ
+    SELECT id_caz INTO v_id_caz
+    FROM CAZ
+    WHERE status_caz IN ('activ', 'in așteptare')
+      AND ROWNUM = 1;
+
+    DBMS_OUTPUT.PUT_LINE(' -->> Test pentru caz ID: ' || v_id_caz);
+
+    -- asignez efectiv cazul
+    package_investigatii.asigneaza_caz_automat(v_id_caz);
+
+    DBMS_OUTPUT.PUT_LINE(' SUCCESS >>> Test finalizat cu succes');
+    DBMS_OUTPUT.PUT_LINE('');
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        DBMS_OUTPUT.PUT_LINE(' !!! Nu exista cazuri active pentru test !!!');
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE(' !!! EROARE: ' || SQLERRM);
+END;
+
+-- testam analiza investigatiei
+DECLARE
+    v_id_caz NUMBER;
+BEGIN
+    SELECT id_caz INTO v_id_caz
+    FROM CAZ WHERE ROWNUM = 1;
+
+    DBMS_OUTPUT.PUT_LINE('Test pentru caz ID: ' || v_id_caz);
+    DBMS_OUTPUT.PUT_LINE('');
+
+    -- analizam efectiv investigatia
+    package_investigatii.analizeaza_investigatie(v_id_caz);
+
+    DBMS_OUTPUT.PUT_LINE(' SUCCESS >>> Test finalizat cu succes');
+    DBMS_OUTPUT.PUT_LINE('');
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        DBMS_OUTPUT.PUT_LINE(' !!! Nu exista cazuri pentru test !!!');
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE(' !!! EROARE: ' || SQLERRM);
+END;
+
+
+-- testez procedura de comparatie intre departamente
+DECLARE
+    v_id_sectie NUMBER;
+    v_numar_caz VARCHAR2(50);
+BEGIN
+    SELECT id_sectie INTO v_id_sectie
+    FROM SECTIE_POLITIE WHERE ROWNUM = 1;
+
+    SELECT numar_caz INTO v_numar_caz
+    FROM CAZ WHERE ROWNUM = 1;
+
+    DBMS_OUTPUT.PUT_LINE(' --->> Test pentru:');
+    DBMS_OUTPUT.PUT_LINE('  -->> Sectie: ' || v_id_sectie);
+    DBMS_OUTPUT.PUT_LINE('  -->> Caz: ' || v_numar_caz);
+    DBMS_OUTPUT.PUT_LINE('');
+
+    -- compar efectiv
+    package_investigatii.compara_departamente(v_numar_caz, v_id_sectie);
+
+    DBMS_OUTPUT.PUT_LINE(' SUCCESS >>> Test finalizat cu succes');
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        DBMS_OUTPUT.PUT_LINE(' !!! Nu exista date pentru test !!!');
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE(' !!! EROARE: ' || SQLERRM);
+END;
+
+-- tastam raportul de performanta pentru o sectie
+DECLARE
+    v_id_sectie NUMBER;
+BEGIN
+    SELECT id_sectie INTO v_id_sectie
+    FROM SECTIE_POLITIE WHERE ROWNUM = 1;
+
+    package_investigatii.raport_departamente(v_id_sectie);
+
+    DBMS_OUTPUT.PUT_LINE(' SUCCES >>> Test finalizat cu succes');
+    DBMS_OUTPUT.PUT_LINE('');
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        DBMS_OUTPUT.PUT_LINE(' !!! Nu exista secții pentru test !!!');
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE(' !!! EROARE: ' || SQLERRM);
+END;
+
+-- testam efectiv exceptiile
+-- pt departament inexistent
+DECLARE
+    v_scor NUMBER;
+BEGIN
+    v_scor := package_investigatii.calculeaza_scor_potrivire(99999, '2024/OMO/001');
+    DBMS_OUTPUT.PUT_LINE(' SUCCESS >>> Scor pentru departament inexistent: ' || v_scor);
+EXCEPTION
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE(' !!! Exceptie: ' || SQLERRM);
+END;
+
+-- TEST COMPLET!!!! -- scenariu complet pentru intrarea unui caz in sistem, pana la raportele de performanta finale
+DECLARE
+    v_id_caz_nou NUMBER;
+    v_id_sectie NUMBER;
+    v_id_departament NUMBER;
+    v_numar_caz_nou VARCHAR2(50);
+    v_dept tip_informatii_departament;
+BEGIN
+    DBMS_OUTPUT.PUT_LINE('---------------------------------------------');
+    DBMS_OUTPUT.PUT_LINE(' ******* TEST COMPLET -->> de la intrarea unui nou caz in sistem pana la rapoartele finale ****** ');
+
+    -- iau datele de test
+    SELECT id_sectie INTO v_id_sectie
+    FROM SECTIE_POLITIE WHERE ROWNUM = 1;
+
+    SELECT id_departament INTO v_id_departament
+    FROM DEPARTAMENT WHERE id_sectie = v_id_sectie AND ROWNUM = 1;
+
+    -- pas 1 -->> creez un caz nou
+    DBMS_OUTPUT.PUT_LINE(' >>> PASUL 1: Creare caz nou');
+
+    INSERT INTO CAZ (
+        id_departament, numar_caz, tip_caz, prioritate_caz, status_caz,
+        data_incidentului, data_raportare, data_deschidere_caz, oras, tara
+    ) VALUES (
+        v_id_departament,
+        '2026/OMO/3007',
+        'Omor', 'critica', 'activ',
+        SYSTIMESTAMP, SYSTIMESTAMP, SYSDATE,
+        'Bucuresti', 'Romania'
+    ) RETURNING id_caz INTO v_id_caz_nou;
+    v_numar_caz_nou := '2026/OMO/3007';
+
+    COMMIT;
+    DBMS_OUTPUT.PUT_LINE('  SUCCESS >>> Caz creat cu ID: ' || v_id_caz_nou);
+
+    -- pas 2 -->> compar departamenele
+    DBMS_OUTPUT.PUT_LINE(' >>> PASUL 2: Analiza departamente disponibile');
+
+    package_investigatii.compara_departamente(
+        v_numar_caz_nou,
+        v_id_sectie
+    );
+
+    -- pas 3 -->> asignarea automata a cazului la departamentul optim
+    DBMS_OUTPUT.PUT_LINE(' >>> PASUL 3: Asignare automata a cazului la departamentul optim');
+    package_investigatii.asigneaza_caz_automat(v_id_caz_nou);
+
+    -- pasul 4 ->> adaug probele la caz
+    DBMS_OUTPUT.PUT_LINE(' >>> PASUL 4: Adaugare probe la caz');
+
+    INSERT INTO PROBA (
+        id_caz, numar_evidenta, tip_proba, categorie_proba,
+        data_colectare, conditie_proba, status_analiza, rezultat_analiza, proba_judecata
+    ) VALUES (
+        v_id_caz_nou, 'PROBA-TEST-001', 'biologica', 'ADN',
+        SYSDATE, 'intacta', 'in asteptare', 'TEST', 'N'
+    );
+
+    INSERT INTO PROBA (
+        id_caz, numar_evidenta, tip_proba, categorie_proba,
+        data_colectare, conditie_proba, status_analiza, rezultat_analiza, proba_judecata
+    ) VALUES (
+        v_id_caz_nou, 'PROBA-TEST-002', 'biologica', 'amprenta',
+        SYSDATE, 'descompusa', 'analizata', 'TEST', 'N'
+    );
+
+    COMMIT;
+    DBMS_OUTPUT.PUT_LINE('  SUCCESS >>> 2 probe adaugate');
+
+    -- pas 5 -->> adaug suspect
+    DBMS_OUTPUT.PUT_LINE(' >>> PASUL 5: Adaugare suspect');
+
+    BEGIN
+        DECLARE
+            v_id_suspect NUMBER;
+        BEGIN
+            SELECT id_suspect INTO v_id_suspect
+            FROM SUSPECT WHERE ROWNUM = 1;
+
+            INSERT INTO CAZ_SUSPECT (
+                id_caz, id_suspect, status_suspect, nivel_suspiciune, alibi, motiv_suspiciune, data_interogare, data_adaugare
+            ) VALUES (
+                v_id_caz_nou, v_id_suspect, 'retinut', 'ridicat',
+                      'TEST', 'TEST', SYSDATE, SYSDATE
+            );
+
+            COMMIT;
+            DBMS_OUTPUT.PUT_LINE('  SUCCESS >>> Suspect adaugat');
+        END;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            DBMS_OUTPUT.PUT_LINE('  !!! Nu exista suspecti in baza de date pentru test !!!');
+    END;
+
+    -- pas 6 --->> analizez investigatia
+    DBMS_OUTPUT.PUT_LINE(' >>> PASUL 6: Analiza completa investigatie');
+    package_investigatii.analizeaza_investigatie(v_id_caz_nou);
+
+    -- pas 7 -->> raport per departamente
+    DBMS_OUTPUT.PUT_LINE(' >>> PASUL 7: Raport performanta dupa adaugare caz');
+    package_investigatii.raport_departamente(v_id_sectie);
+
+    -- curat datele adaugate
+    DELETE FROM CAZ_SUSPECT WHERE id_caz = v_id_caz_nou;
+    DELETE FROM PROBA WHERE id_caz = v_id_caz_nou;
+    DELETE FROM CAZ WHERE id_caz = v_id_caz_nou;
+    COMMIT;
+
+
+    DBMS_OUTPUT.PUT_LINE('-------------------------------------------');
+    DBMS_OUTPUT.PUT_LINE(' SUCCESS >>> SCENARIU COMPLET FINALIZAT CU SUCCES ');
+
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        DBMS_OUTPUT.PUT_LINE(' !!! EROARE: ' || SQLERRM);
+        DBMS_OUTPUT.PUT_LINE('Rollback efectuat');
+END;
