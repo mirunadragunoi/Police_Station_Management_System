@@ -6,7 +6,6 @@
 2. [Arhitectura Bazei de Date](#arhitectura-bazei-de-date)
 3. [Diagrame](#diagrame)
 4. [Schema Bazei de Date](#schema-bazei-de-date)
-5. [Funcționalități Implementate](#funcționalități-implementate)
 6. [Instalare și Configurare](#instalare-și-configurare)
 7. [Utilizare](#utilizare)
 8. [Cerințe Proiect](#cerințe-proiect)
@@ -57,13 +56,13 @@ POLIȚIA ROMÂNĂ
 
 ### Diagramă ER (Entity-Relationship)
 
-![Diagrama ER](scrips/diagrama_ERD.png)
+![Diagrama ER](diagrams/diagrama_ERD.png)
 
 *Diagrama ER prezintă relațiile dintre entitățile sistemului și cardinalitățile acestora.*
 
 ### Diagramă Conceptuală (Model Relațional)
 
-![Diagrama Conceptuală](scrips/diagrama_conceptuala.png)
+![Diagrama Conceptuală](diagrams/diagrama_conceptuala.png)
 
 *Diagrama conceptuală prezintă structura detaliată a tabelelor cu toate atributele, tipurile de date și constrângerile.*
 ---
