@@ -57,277 +57,38 @@ POLIȚIA ROMÂNĂ
 
 ### Diagramă ER (Entity-Relationship)
 
-![Diagrama ER](path/to/diagrama_ERD.png)
+![Diagrama ER](scrips/diagrama_ERD.png)
 
 *Diagrama ER prezintă relațiile dintre entitățile sistemului și cardinalitățile acestora.*
 
 ### Diagramă Conceptuală (Model Relațional)
 
-![Diagrama Conceptuală](path/to/diagrama_conceptuala.png)
+![Diagrama Conceptuală](scrips/diagrama_conceptuala.png)
 
 *Diagrama conceptuală prezintă structura detaliată a tabelelor cu toate atributele, tipurile de date și constrângerile.*
 ---
 
 ## 🗃️ Schema Bazei de Date
 
-### 1. SECTIE_POLITIE - Reprezintă unitățile polițienești la nivel de secție (ex: Secția 1 Poliție București)
+**1. SECTIE_POLITIE** - Reprezintă unitățile polițienești la nivel de secție (ex: Secția 1 Poliție București)
 
-### 2. SPECIALIZARE - Tipurile de specializări disponibile (Omoruri - OMO, Furturi - FURT, Cyber - CYB, etc.)
+**2. SPECIALIZARE** - Tipurile de specializări disponibile (Omoruri - OMO, Furturi - FURT, Cyber - CYB, etc.)
 
-### 3. DEPARTAMENT - Departamente specializate în cadrul secțiilor (ex: Departament Omoruri - Secția 1)
+**3. DEPARTAMENT** - Departamente specializate în cadrul secțiilor (ex: Departament Omoruri - Secția 1)
 
-### 4. OFITER -  Ofițerii de poliție alocați departamentelor, cu ierarhie (supervizor)
+**4. OFITER** -  Ofițerii de poliție alocați departamentelor, cu ierarhie (supervizor)
 
-### 5. CAZ - Cazurile criminale gestionate de sistem
+**5. CAZ** - Cazurile criminale gestionate de sistem
 
-### 6. PROBA - Probele colectate pentru cazuri (ADN, amprentă, documente, etc.)
+**6. PROBA** - Probele colectate pentru cazuri (ADN, amprentă, documente, etc.)
 
-### 7. SUSPECT - Bază de date suspecți (poate fi partajată între cazuri)
+**7. SUSPECT** - Bază de date suspecți (poate fi partajată între cazuri)
 
-### 8. VICTIMA - Bază de date victime
+**8. VICTIMA** - Bază de date victime
 
-### 9. CAZ_SUSPECT (Tabelă Asociativă) - Relația Many-to-Many între cazuri și suspecți
+**9. CAZ_SUSPECT** (Tabelă Asociativă) - Relația Many-to-Many între cazuri și suspecți
 
-### 10. CAZ_VICTIMA (Tabelă Asociativă) - Relația Many-to-Many între cazuri și victime
-
----
-
-## ⚙️ Funcționalități Implementate
-
-### 🔹 Cerința 6: Procedură cu Colecții Oracle
-
-**Procedură:** `generator_raport(p_id_sectie, p_perioada_zile)`
-
-**Colecții folosite:**
-1. **INDEX-BY TABLE** - Stocare temporară statistici departamente
-2. **NESTED TABLE** - Listă cazuri active
-3. **VARRAY** - Top 5 ofițeri cu cele mai multe cazuri
-
-**Output:** Raport complet performanță secție cu statistici detaliate
-
----
-
-### 🔹 Cerința 7: Cursoare (Explicit + Parametrizat)
-
-**Procedură:** `raport_ierarhie_ofiteri(p_id_sectie)`
-
-**Cursoare implementate:**
-- **Cursor EXPLICIT** - Parcurge departamente din secție
-- **Cursor PARAMETRIZAT DEPENDENT** - Pentru fiecare departament, preia ofițerii
-```sql
-BEGIN
-    raport_ierarhie_ofiteri(1);
-END;
-```
-
-**Demonstrează:** Relația de dependență între cursoare (cursor parametrizat primește valori din cursor părinte)
-
----
-
-### 🔹 Cerința 9: Procedură cu 5+ Tabele și Excepții Proprii
-
-**Procedură:** `transfera_caz_departament(p_id_caz, p_id_dept_destinatie)`
-
-**Tabele folosite:**
-1. CAZ
-2. DEPARTAMENT
-3. SECTIE_POLITIE
-4. CAZ_SUSPECT
-5. PROBA
-
-**Excepții personalizate:**
-- `ex_caz_netransferabil` - Status caz nu permite transfer
-- `ex_conflict_sectie` - Departamente din secții diferite
-- `ex_departament_supraincarcat` - Departament destinație plin
-```sql
-BEGIN
-    transfera_caz_departament(5, 3);
-END;
-```
-
----
-
-### 🔹 Cerința 10: Trigger LMD Nivel COMANDĂ
-
-**Trigger:** `trg_audit_cazuri`
-
-**Caracteristici:**
-- **Nivel:** STATEMENT (comandă)
-- **Eveniment:** AFTER INSERT OR UPDATE OR DELETE ON CAZ
-- **Execuții:** O SINGURĂ DATĂ per comandă SQL (nu per rând!)
-
-**Tabelă audit:** `audit_cazuri`
-```sql
--- Se activează o singură dată pentru toate cele 3 INSERT-uri
-INSERT ALL
-    INTO CAZ (...) VALUES (...)
-    INTO CAZ (...) VALUES (...)
-    INTO CAZ (...) VALUES (...)
-SELECT * FROM DUAL;
-```
-
-**Beneficii:** Eficiență mare pentru operații în masă (bulk operations)
-
----
-
-### 🔹 Cerința 11: Trigger LMD Nivel LINIE
-
-**Trigger:** `trg_audit_probe_linie`
-
-**Caracteristici:**
-- **Nivel:** ROW (linie) - `FOR EACH ROW`
-- **Eveniment:** AFTER INSERT OR UPDATE OR DELETE ON PROBA
-- **Execuții:** Pentru FIECARE rând afectat
-- **Acces:** `:OLD` și `:NEW` values
-
-**Tabelă audit:** `audit_probe_detaliat`
-```sql
--- Trigger se execută de 3 ori (câte o dată pentru fiecare probă)
-INSERT INTO PROBA (...) VALUES (...); -- Execuție 1
-INSERT INTO PROBA (...) VALUES (...); -- Execuție 2
-INSERT INTO PROBA (...) VALUES (...); -- Execuție 3
-```
-
-**Înregistrează:**
-- Valori VECHI (`:OLD`) vs. NOI (`:NEW`)
-- Ce câmp specific s-a modificat
-- Istoric complet modificări per probă
-
----
-
-### 🔹 Cerința 12: Trigger LDD (DDL)
-
-**Trigger:** `trg_ddl_protectie_politie`
-
-**Caracteristici:**
-- **Nivel:** SCHEMA
-- **Eveniment:** AFTER DDL (CREATE, ALTER, DROP, TRUNCATE)
-- **Protecție:** Blochează DROP/TRUNCATE pe 10 tabele critice
-
-**Tabele protejate:**
-- SECTIE_POLITIE, DEPARTAMENT, OFITER, CAZ, PROBA
-- SUSPECT, VICTIMA, CAZ_SUSPECT, CAZ_VICTIMA, SPECIALIZARE
-
-**Tabelă audit:** `audit_ddl_politie`
-```sql
--- ✅ PERMIS
-CREATE TABLE test_tabel (...);
-ALTER TABLE test_tabel ADD (coloana VARCHAR2(50));
-
--- ❌ BLOCAT
-DROP TABLE CAZ;  -- Eroare: Tabel critic protejat!
-TRUNCATE TABLE PROBA;  -- Eroare: Operație interzisă!
-```
-
-**Procedură autonomă:** `proc_audit_ddl_politie` (cu PRAGMA AUTONOMOUS_TRANSACTION)
-
----
-
-### 🔹 Cerința 13: Pachet cu Tipuri Complexe
-
-**Pachet:** `package_investigatii`
-
-#### Tipuri de Date Complexe
-
-**1. `tip_informatii_departament` (OBJECT TYPE)**
-```sql
-TYPE tip_informatii_departament AS OBJECT (
-    id_departament NUMBER,
-    nume_departament VARCHAR2(150),
-    specializare VARCHAR2(100),
-    nr_ofiteri NUMBER,
-    nr_cazuri_active NUMBER,
-    scor_potrivire NUMBER
-);
-```
-
-**2. `tip_caz_analiza` (OBJECT TYPE)**
-```sql
-TYPE tip_caz_analiza AS OBJECT (
-    id_caz NUMBER,
-    numar_caz VARCHAR2(50),
-    scor_progres NUMBER,
-    nr_probe NUMBER,
-    nr_suspecti NUMBER,
-    nivel_urgenta VARCHAR2(20),
-    recomandari VARCHAR2(1000)
-);
-```
-
-**3. `tip_lista_departament` (NESTED TABLE)**
-```sql
-TYPE tip_lista_departament AS TABLE OF tip_informatii_departament;
-```
-
-#### Funcții (5)
-
-**F1:** `calculeaza_scor_potrivire(p_id_departament, p_numar_caz)` → NUMBER
-- Calculează scor 0-100 bazat pe:
-  - **Specializare (50p):** Potrivire cod din număr caz (ex: `2024/OMO/001` → `OMO`)
-  - **Capacitate (30p):** Număr cazuri active (0-3 cazuri = 30p, 7-8 = 5p)
-  - **Experiență (20p):** Număr ofițeri × 5 puncte
-
-**F2:** `gaseste_departament_optim(p_numar_caz, p_id_sectie)` → tip_informatii_departament
-- Returnează departamentul cu scorul cel mai mare
-- **Returnează obiect complet**, nu doar ID
-
-**F3:** `calculeaza_progres_investigatie(p_id_caz)` → NUMBER
-- Scor 0-100 bazat pe:
-  - Probe analizate (40p)
-  - Suspecți identificați (35p)
-  - Status caz (25p)
-
-**F4:** `analizeaza_investigatie_detaliat(p_id_caz)` → tip_caz_analiza
-- Returnează **obiect complet** cu analiză investigație
-- Include recomandări automate
-
-**F5:** `obtine_lista_departamente(p_numar_caz, p_id_sectie)` → tip_lista_departament
-- Returnează **colecție** cu TOATE departamentele și scorurile lor
-
-#### Proceduri (4)
-
-**P1:** `asigneaza_caz_automat(p_id_caz)`
-- Asignează automat cazul la departamentul optim
-- Folosește `tip_informatii_departament` intern
-
-**P2:** `analizeaza_investigatie(p_id_caz)`
-- Afișează analiză completă
-- Folosește `tip_caz_analiza` intern
-
-**P3:** `compara_departamente(p_numar_caz, p_id_sectie)`
-- Afișează TOATE departamentele cu scoruri comparative
-- Folosește `tip_lista_departament` (colecția)
-
-**P4:** `raport_departamente(p_id_sectie)`
-- Raport performanță cu statistici
-
-#### Exemplu Utilizare
-```sql
--- Asignare automată caz nou
-BEGIN
-    package_investigatii.asigneaza_caz_automat(15);
-END;
-
--- Analiză investigație
-BEGIN
-    package_investigatii.analizeaza_investigatie(15);
-END;
-
--- Comparație departamente pentru un caz
-BEGIN
-    package_investigatii.compara_departamente('2024/OMO/047', 1);
-END;
-
--- Obținere departament optim ca obiect
-DECLARE
-    v_dept tip_informatii_departament;
-BEGIN
-    v_dept := package_investigatii.gaseste_departament_optim('2024/OMO/047', 1);
-    
-    DBMS_OUTPUT.PUT_LINE('Departament: ' || v_dept.nume_departament);
-    DBMS_OUTPUT.PUT_LINE('Scor: ' || v_dept.scor_potrivire || '/100');
-END;
-```
+**10. CAZ_VICTIMA** (Tabelă Asociativă) - Relația Many-to-Many între cazuri și victime
 
 ---
 
@@ -456,7 +217,7 @@ police-project-work/
 ├── docs/
 │   ├── SGBD - Cerinte Proiect 2025-2026.pdf          # cerinte proiect
 │   ├── SGBD_Proiect_Dragunoi_Miruna.docx             # implementare proiect
-└──└── Cod_Text_Proiect_SGBD_Dragunoi_Miruna.txt     # codul proiectului in formate text
+└── └── Cod_Text_Proiect_SGBD_Dragunoi_Miruna.txt     # codul proiectului in formate text
 ```
 
 ---
@@ -497,7 +258,7 @@ police-project-work/
 ## 📞 Contact și Suport
 
 **Autor:** Drăgunoi Miruna
-**GitHub:** [@miruna-github](https://github.com/mirunadragunoi-github)  
+**GitHub:** ([https://github.com/mirunadragunoi-github](https://github.com/mirunadragunoi))  
 **Universitate:** Universitatea din București, Facultatea de Matematică și Informatică
 **An:** 2024-2025  
 **Disciplina:** Sisteme de gestiune a bazelor de date
