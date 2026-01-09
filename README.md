@@ -266,7 +266,7 @@ police-project-work/
 
 ## 📄 Licență
 
-Acest proiect este dezvoltat în scop educațional pentru cursul de Baze de Date.
+Acest proiect este dezvoltat în scop educațional pentru cursul de Sisteme de gestiune a Bazelor de date.
 
 ---
 
